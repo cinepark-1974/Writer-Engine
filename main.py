@@ -8,6 +8,7 @@ from prompt import (
     SYSTEM_PROMPT,
     GENRE_RULES,
     BEATS_15,
+    ACT_BEATS,
     build_scene_plan_prompt,
     build_write_beat_prompt,
     build_rewrite_prompt,
@@ -37,15 +38,14 @@ st.markdown("""
 :root {
     --navy: #191970; --y: #FFCB05; --bg: #F7F7F5;
     --card: #FFFFFF; --card-border: #E2E2E0; --t: #1A1A2E;
-    --r: #D32F2F; --g: #2EC484; --dim: #8E8E99; --light-bg: #EEEEF6;
+    --g: #2EC484; --dim: #8E8E99; --light-bg: #EEEEF6;
     --display: 'Playfair Display', 'Paperlogy', 'Georgia', serif;
     --body: 'Pretendard', -apple-system, sans-serif;
     --heading: 'Paperlogy', 'Pretendard', sans-serif;
 }
 
 html, body, [class*="css"] {
-    font-family: var(--body); color: var(--t);
-    -webkit-font-smoothing: antialiased;
+    font-family: var(--body); color: var(--t); -webkit-font-smoothing: antialiased;
 }
 .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"],
 [data-testid="stMainBlockContainer"], [data-testid="stHeader"],
@@ -130,7 +130,7 @@ details[open] > div { background-color: var(--card) !important; }
 .brand-title {
     font-size: 2.6rem; font-weight: 900; color: var(--navy);
     font-family: var(--display); letter-spacing: -0.02em;
-    margin-bottom: 0.15rem; position: relative; display: inline-block;
+    position: relative; display: inline-block;
 }
 .brand-title::after {
     content: ''; position: absolute; bottom: 2px; left: 0;
@@ -170,6 +170,12 @@ details[open] > div { background-color: var(--card) !important; }
     border-radius: 4px; font-size: 0.78rem; font-weight: 800;
     letter-spacing: 0.04em; margin-bottom: 0.4rem;
 }
+.act-tag {
+    background: var(--navy); color: #fff;
+    display: inline-block; padding: 0.25rem 0.8rem;
+    border-radius: 4px; font-size: 0.82rem; font-weight: 800;
+    letter-spacing: 0.06em;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -180,8 +186,8 @@ FIELDS = ["logline", "intent", "gns", "characters", "world",
           "structure", "scene_design", "treatment", "tone"]
 
 for k, v in {
-    "scene_plan": "",
-    "beats_done": {},      # {1: "text...", 2: "text...", ...}
+    "plan_1막": "", "plan_2막": "", "plan_3막": "",
+    "beats_done": {},
     "current_beat": 1,
     "genre": "느와르",
     "fmt": "영화 (장편)",
@@ -200,17 +206,14 @@ def get_client():
     api_key = st.secrets.get("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_API_KEY"))
     return Anthropic(api_key=api_key) if api_key else None
 
-
 def stream_ai(prompt: str, tokens: int = 8000):
-    """스트리밍 제너레이터."""
     client = get_client()
     if not client:
         yield "❌ ANTHROPIC_API_KEY가 설정되지 않았습니다."
         return
     try:
         with client.messages.stream(
-            model=ANTHROPIC_MODEL,
-            max_tokens=tokens,
+            model=ANTHROPIC_MODEL, max_tokens=tokens,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         ) as stream:
@@ -218,6 +221,18 @@ def stream_ai(prompt: str, tokens: int = 8000):
                 yield text
     except Exception as e:
         yield f"\n\n❌ 오류: {e}"
+
+def full_plan() -> str:
+    """3막 플랜 합침."""
+    parts = []
+    for act in ["1막", "2막", "3막"]:
+        p = st.session_state.get(f"plan_{act}", "")
+        if p:
+            parts.append(p)
+    return "\n\n".join(parts)
+
+def plan_ready() -> bool:
+    return all(st.session_state.get(f"plan_{a}", "").strip() for a in ["1막", "2막", "3막"])
 
 
 # ═══════════════════════════════════════════════════════════
@@ -233,16 +248,14 @@ st.markdown(
 )
 
 # ═══════════════════════════════════════════════════════════
-# STEP 1 — 자료 입력 (9칸 붙여넣기)
+# STEP 1 — 자료 입력
 # ═══════════════════════════════════════════════════════════
 st.markdown(
     '<div class="section-header">📥 STEP 1 · 자료 입력 <span class="en">PASTE FROM CREATOR ENGINE</span></div>',
     unsafe_allow_html=True,
 )
 st.markdown(
-    '<div class="small-meta">'
-    'Creator Engine 결과를 항목별로 복사해서 붙여넣으세요. 필요한 칸만 채워도 됩니다.'
-    '</div>',
+    '<div class="small-meta">Creator Engine 결과를 항목별로 복사해서 붙여넣으세요.</div>',
     unsafe_allow_html=True,
 )
 
@@ -255,16 +268,15 @@ with col_g2:
     fmt = st.selectbox("포맷", ["영화 (장편)", "시리즈", "단편", "웹드라마"])
     st.session_state["fmt"] = fmt
 
-# ── 9개 입력 칸 ──
 st.session_state["logline"] = st.text_area(
     "Logline", value=st.session_state["logline"],
-    height=60, placeholder="Creator Engine → Logline 복사")
+    height=60, placeholder="로그라인 복사")
 
 col_i1, col_i2 = st.columns(2)
 with col_i1:
     st.session_state["intent"] = st.text_area(
         "기획의도", value=st.session_state["intent"],
-        height=100, placeholder="Creator Engine → 기획의도 복사")
+        height=100, placeholder="기획의도 복사")
     st.session_state["gns"] = st.text_area(
         "Goal / Need / Strategy", value=st.session_state["gns"],
         height=100, placeholder="GNS 복사")
@@ -273,8 +285,8 @@ with col_i1:
         height=100, placeholder="World Building 복사")
 with col_i2:
     st.session_state["characters"] = st.text_area(
-        "캐릭터 (바이블 포함)", value=st.session_state["characters"],
-        height=300, placeholder="캐릭터 + 바이블 전체 복사 ← 가장 중요!")
+        "캐릭터 (바이블 포함) ← 가장 중요", value=st.session_state["characters"],
+        height=300, placeholder="캐릭터 + 바이블 전체 복사")
 
 st.session_state["structure"] = st.text_area(
     "구조 / 시놉시스 / 비트시트", value=st.session_state["structure"],
@@ -292,51 +304,120 @@ st.session_state["tone"] = st.text_area(
     "톤 문서", value=st.session_state["tone"],
     height=80, placeholder="Tone Document 복사")
 
-# API 상태
 if get_client():
     st.success("API 연결 준비 완료")
 else:
     st.warning("ANTHROPIC_API_KEY가 설정되지 않았습니다.")
 
+has_material = any(st.session_state[f].strip() for f in FIELDS)
+
 # ═══════════════════════════════════════════════════════════
-# SCENE PLAN — 15비트 씬 플랜
+# SCENE PLAN — 막별 3회 분할
 # ═══════════════════════════════════════════════════════════
 st.markdown(
-    '<div class="section-header">🗺️ 씬 플랜 <span class="en">SCENE PLAN · 15 BEATS</span></div>',
+    '<div class="section-header">🗺️ 씬 플랜 <span class="en">SCENE PLAN · 3-ACT SPLIT</span></div>',
     unsafe_allow_html=True,
 )
 
-has_material = any(st.session_state[f].strip() for f in FIELDS)
-
 if has_material:
-    if st.button("씬 플랜 생성", type="primary", use_container_width=True):
-        prompt = build_scene_plan_prompt(
-            genre=genre, fmt=fmt,
-            logline=st.session_state["logline"],
-            intent=st.session_state["intent"],
-            gns=st.session_state["gns"],
-            characters=st.session_state["characters"],
-            world=st.session_state["world"],
-            structure=st.session_state["structure"],
-            scene_design=st.session_state["scene_design"],
-            treatment=st.session_state["treatment"],
-            tone=st.session_state["tone"],
+    st.markdown(
+        '<div class="small-meta">'
+        '100씬/100분 기준. 막별로 나눠서 생성합니다 (1막 → 2막 → 3막 순서).'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── 공통 인자 ──
+    plan_kw = dict(
+        genre=genre, fmt=fmt,
+        logline=st.session_state["logline"],
+        intent=st.session_state["intent"],
+        gns=st.session_state["gns"],
+        characters=st.session_state["characters"],
+        world=st.session_state["world"],
+        structure=st.session_state["structure"],
+        scene_design=st.session_state["scene_design"],
+        treatment=st.session_state["treatment"],
+        tone=st.session_state["tone"],
+    )
+
+    # ── 3개 버튼 ──
+    col_p1, col_p2, col_p3 = st.columns(3)
+
+    with col_p1:
+        plan1_done = bool(st.session_state["plan_1막"])
+        btn1 = st.button(
+            f"{'✅ ' if plan1_done else ''}1막 플랜 (Beat 1~5)",
+            type="primary" if not plan1_done else "secondary",
+            use_container_width=True,
         )
-        result = st.write_stream(stream_ai(prompt, tokens=8000))
-        st.session_state["scene_plan"] = result
+
+    with col_p2:
+        plan2_done = bool(st.session_state["plan_2막"])
+        btn2 = st.button(
+            f"{'✅ ' if plan2_done else ''}2막 플랜 (Beat 6~11)",
+            type="primary" if plan1_done and not plan2_done else "secondary",
+            use_container_width=True,
+            disabled=not plan1_done,
+        )
+
+    with col_p3:
+        plan3_done = bool(st.session_state["plan_3막"])
+        btn3 = st.button(
+            f"{'✅ ' if plan3_done else ''}3막 플랜 (Beat 12~15)",
+            type="primary" if plan2_done and not plan3_done else "secondary",
+            use_container_width=True,
+            disabled=not plan2_done,
+        )
+
+    # ── 생성 실행 ──
+    if btn1:
+        prompt = build_scene_plan_prompt(act="1막", **plan_kw, previous_plan="")
+        st.markdown('<div class="act-tag">1막 씬 플랜 생성 중…</div>', unsafe_allow_html=True)
+        result = st.write_stream(stream_ai(prompt))
+        st.session_state["plan_1막"] = result
+        st.session_state["plan_2막"] = ""
+        st.session_state["plan_3막"] = ""
         st.session_state["beats_done"] = {}
         st.session_state["current_beat"] = 1
+        st.rerun()
 
-    if st.session_state["scene_plan"]:
-        done_count = len(st.session_state["beats_done"])
+    if btn2:
+        prompt = build_scene_plan_prompt(
+            act="2막", **plan_kw,
+            previous_plan=st.session_state["plan_1막"],
+        )
+        st.markdown('<div class="act-tag">2막 씬 플랜 생성 중…</div>', unsafe_allow_html=True)
+        result = st.write_stream(stream_ai(prompt))
+        st.session_state["plan_2막"] = result
+        st.session_state["plan_3막"] = ""
+        st.rerun()
+
+    if btn3:
+        prev = st.session_state["plan_1막"] + "\n\n" + st.session_state["plan_2막"]
+        prompt = build_scene_plan_prompt(
+            act="3막", **plan_kw,
+            previous_plan=prev,
+        )
+        st.markdown('<div class="act-tag">3막 씬 플랜 생성 중…</div>', unsafe_allow_html=True)
+        result = st.write_stream(stream_ai(prompt))
+        st.session_state["plan_3막"] = result
+        st.rerun()
+
+    # ── 플랜 상태 표시 ──
+    for act in ["1막", "2막", "3막"]:
+        p = st.session_state.get(f"plan_{act}", "")
+        if p:
+            with st.expander(f"{act} 씬 플랜 ✅", expanded=False):
+                st.text(p)
+
+    if plan_ready():
         st.markdown(
-            f'<div class="callout"><div class="cl">PLAN STATUS</div>'
-            f'15비트 중 {done_count}비트 집필 완료'
-            f'</div>',
+            '<div class="callout"><div class="cl">PLAN COMPLETE</div>'
+            '3막 씬 플랜 완성. 아래에서 비트별 집필을 시작하세요.'
+            '</div>',
             unsafe_allow_html=True,
         )
-        with st.expander("씬 플랜 보기", expanded=False):
-            st.text(st.session_state["scene_plan"])
 else:
     st.markdown(
         '<div class="callout"><div class="cl">WAITING</div>'
@@ -348,7 +429,7 @@ else:
 # ═══════════════════════════════════════════════════════════
 # STEP 2 — 비트별 집필
 # ═══════════════════════════════════════════════════════════
-if st.session_state["scene_plan"]:
+if plan_ready():
     st.markdown(
         '<div class="section-header">✍️ STEP 2 · 비트별 집필 <span class="en">WRITE BY BEAT</span></div>',
         unsafe_allow_html=True,
@@ -356,12 +437,13 @@ if st.session_state["scene_plan"]:
 
     cur = st.session_state["current_beat"]
     done = st.session_state["beats_done"]
+    combined_plan = full_plan()
 
-    # ── 완료된 비트 표시 ──
+    # ── 완료 비트 표시 ──
     for b_no in sorted(done.keys()):
         b_info = BEATS_15[b_no - 1]
-        label = f"Beat {b_no}. {b_info['name']} ({b_info['act']}) ✅"
-        with st.expander(label, expanded=(b_no == max(done.keys()))):
+        with st.expander(f"Beat {b_no}. {b_info['name']} ({b_info['act']}) ✅",
+                         expanded=(b_no == max(done.keys()))):
             st.text(done[b_no])
 
     # ── 현재 비트 정보 ──
@@ -373,22 +455,15 @@ if st.session_state["scene_plan"]:
             f'<span style="color:var(--dim)">({b_info["act"]})</span>',
             unsafe_allow_html=True,
         )
-        st.markdown(
-            f'<div class="small-meta">{b_info["desc"]}</div>',
-            unsafe_allow_html=True,
-        )
 
     # ── 버튼 ──
     col_b1, col_b2 = st.columns(2)
-
     with col_b1:
         write_btn = st.button(
             f"Beat {cur} 집필" if cur <= 15 else "전체 완료 ✅",
-            type="primary",
-            use_container_width=True,
+            type="primary", use_container_width=True,
             disabled=(cur > 15),
         )
-
     with col_b2:
         rewrite_btn = st.button(
             "마지막 비트 다시",
@@ -400,20 +475,16 @@ if st.session_state["scene_plan"]:
     if rewrite_btn:
         rewrite_note = st.text_input(
             "수정 지시 (비워두면 전체 강화)",
-            placeholder="예: 캐릭터 대사를 더 차갑게 / 긴장감 올려줘",
+            placeholder="예: 대사를 더 차갑게 / 긴장감 올려줘",
         )
 
-    # ── Beat 집필 ──
+    # ── 집필 ──
     if write_btn and cur <= 15:
-        # 직전 비트의 마지막 부분
-        prev_text = ""
-        if cur > 1 and (cur - 1) in done:
-            prev_text = done[cur - 1]
+        prev_text = done[cur - 1] if (cur > 1 and (cur - 1) in done) else ""
 
         prompt = build_write_beat_prompt(
-            genre=genre,
-            beat_number=cur,
-            scene_plan=st.session_state["scene_plan"],
+            genre=genre, beat_number=cur,
+            scene_plan=combined_plan,
             characters=st.session_state["characters"],
             treatment=st.session_state["treatment"],
             tone=st.session_state["tone"],
@@ -422,35 +493,24 @@ if st.session_state["scene_plan"]:
             world=st.session_state["world"],
         )
 
-        st.markdown(
-            f'<div class="beat-tag">Beat {cur} 집필 중…</div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="beat-tag">Beat {cur} 집필 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=8000))
 
         st.session_state["beats_done"][cur] = result
         st.session_state["current_beat"] = cur + 1
         st.rerun()
 
-    # ── Beat 다시 쓰기 ──
+    # ── 다시 쓰기 ──
     if rewrite_btn and done:
         last_beat = max(done.keys())
-
         prompt = build_rewrite_prompt(
-            genre=genre,
-            beat_number=last_beat,
+            genre=genre, beat_number=last_beat,
             current_text=done[last_beat],
             characters=st.session_state["characters"],
             instruction=rewrite_note,
         )
-
-        b_info = BEATS_15[last_beat - 1]
-        st.markdown(
-            f'<div class="beat-tag">Beat {last_beat} 다시 쓰는 중…</div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="beat-tag">Beat {last_beat} 다시 쓰는 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=8000))
-
         st.session_state["beats_done"][last_beat] = result
         st.rerun()
 
@@ -462,22 +522,17 @@ if st.session_state["beats_done"]:
         '<div class="section-header">📄 다운로드 <span class="en">EXPORT</span></div>',
         unsafe_allow_html=True,
     )
-
-    all_parts = []
+    parts = []
     for b_no in sorted(st.session_state["beats_done"].keys()):
         b_info = BEATS_15[b_no - 1]
-        all_parts.append(
-            f"{'='*60}\n"
-            f"Beat {b_no}. {b_info['name']} ({b_info['act']})\n"
-            f"{'='*60}\n\n"
+        parts.append(
+            f"{'='*60}\nBeat {b_no}. {b_info['name']} ({b_info['act']})\n{'='*60}\n\n"
             f"{st.session_state['beats_done'][b_no]}"
         )
-
-    all_text = "\n\n\n".join(all_parts)
-    done_count = len(st.session_state["beats_done"])
+    all_text = "\n\n\n".join(parts)
 
     st.download_button(
-        label=f"시나리오 TXT ({done_count}/15 비트)",
+        label=f"시나리오 TXT ({len(st.session_state['beats_done'])}/15 비트)",
         data=all_text,
         file_name=f"screenplay_{genre}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
         mime="text/plain",
@@ -488,17 +543,11 @@ if st.session_state["beats_done"]:
 # RESET
 # ═══════════════════════════════════════════════════════════
 st.markdown("---")
-
 col_r1, col_r2 = st.columns([3, 1])
 with col_r2:
     if st.button("전체 초기화", use_container_width=True):
-        for k in ["scene_plan", "beats_done", "current_beat"] + FIELDS:
-            if k == "beats_done":
-                st.session_state[k] = {}
-            elif k == "current_beat":
-                st.session_state[k] = 1
-            else:
-                st.session_state[k] = ""
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
         st.rerun()
 
-st.caption("© 2026 BLUE JEANS PICTURES · Writer Engine v2.1")
+st.caption("© 2026 BLUE JEANS PICTURES · Writer Engine v2.2")
