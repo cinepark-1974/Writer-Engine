@@ -22,8 +22,8 @@ ANTHROPIC_MODEL = "claude-sonnet-4-6"
 # Page Config
 # -----------------------------
 st.set_page_config(
-    page_title="BLUE JEANS WRITER ENGINE",
-    page_icon="🟦",
+    page_title="BLUE JEANS · Writer Engine",,
+    page_icon="👖",
     layout="centered",
 )
 
