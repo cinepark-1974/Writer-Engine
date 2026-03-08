@@ -418,6 +418,15 @@ if has_material:
             '</div>',
             unsafe_allow_html=True,
         )
+        # ── 씬 플랜 중간 저장 ──
+        plan_all = full_plan()
+        st.download_button(
+            label="씬 플랜 TXT 저장",
+            data=plan_all,
+            file_name=f"scene_plan_{genre}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
 else:
     st.markdown(
         '<div class="callout"><div class="cl">WAITING</div>'
@@ -515,29 +524,126 @@ if plan_ready():
         st.rerun()
 
 # ═══════════════════════════════════════════════════════════
-# DOWNLOAD
+# DOWNLOAD — TXT + DOCX
 # ═══════════════════════════════════════════════════════════
 if st.session_state["beats_done"]:
     st.markdown(
-        '<div class="section-header">📄 다운로드 <span class="en">EXPORT</span></div>',
+        '<div class="section-header">📄 다운로드 <span class="en">EXPORT · SAVE ANYTIME</span></div>',
         unsafe_allow_html=True,
     )
+
+    done_count = len(st.session_state["beats_done"])
+
+    st.markdown(
+        f'<div class="callout"><div class="cl">DATA SAFE</div>'
+        f'{done_count}/15 비트 완료. 페이지를 새로고침하면 데이터가 사라집니다. '
+        f'아래 버튼으로 수시로 저장하세요.'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── TXT 조립 ──
     parts = []
     for b_no in sorted(st.session_state["beats_done"].keys()):
         b_info = BEATS_15[b_no - 1]
         parts.append(
-            f"{'='*60}\nBeat {b_no}. {b_info['name']} ({b_info['act']})\n{'='*60}\n\n"
+            f"{'='*60}\n"
+            f"{b_info['act']} — Beat {b_no}. {b_info['name']}\n"
+            f"{'='*60}\n\n"
             f"{st.session_state['beats_done'][b_no]}"
         )
     all_text = "\n\n\n".join(parts)
 
-    st.download_button(
-        label=f"시나리오 TXT ({len(st.session_state['beats_done'])}/15 비트)",
-        data=all_text,
-        file_name=f"screenplay_{genre}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
-        mime="text/plain",
-        use_container_width=True,
-    )
+    # ── DOCX 생성 ──
+    def make_docx() -> bytes:
+        from docx import Document as DocxDocument
+        from docx.shared import Pt, Inches, RGBColor
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+        doc = DocxDocument()
+
+        # 스타일 설정
+        style = doc.styles["Normal"]
+        style.font.name = "맑은 고딕"
+        style.font.size = Pt(10)
+        style.paragraph_format.space_after = Pt(4)
+
+        # 커버
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r = p.add_run("BLUE JEANS PICTURES")
+        r.font.size = Pt(10)
+        r.font.color.rgb = RGBColor(0x19, 0x19, 0x70)
+        r.bold = True
+
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r = p.add_run("WRITER ENGINE")
+        r.font.size = Pt(28)
+        r.font.color.rgb = RGBColor(0x19, 0x19, 0x70)
+        r.bold = True
+
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r = p.add_run(f"장르: {genre}  |  {done_count}/15 비트")
+        r.font.size = Pt(10)
+        r.font.color.rgb = RGBColor(0x8E, 0x8E, 0x99)
+
+        doc.add_page_break()
+
+        # 비트별 내용
+        for b_no in sorted(st.session_state["beats_done"].keys()):
+            b_info = BEATS_15[b_no - 1]
+
+            # ACT + Beat 헤더
+            h = doc.add_heading(
+                f"{b_info['act']} — Beat {b_no}. {b_info['name']}",
+                level=1,
+            )
+            for run in h.runs:
+                run.font.color.rgb = RGBColor(0x19, 0x19, 0x70)
+
+            # 본문
+            text = st.session_state["beats_done"][b_no]
+            for line in text.split("\n"):
+                if line.strip():
+                    doc.add_paragraph(line)
+                else:
+                    doc.add_paragraph("")
+
+            doc.add_page_break()
+
+        # 바이트로
+        from io import BytesIO
+        buf = BytesIO()
+        doc.save(buf)
+        buf.seek(0)
+        return buf.getvalue()
+
+    # ── 다운로드 버튼 ──
+    col_dl1, col_dl2 = st.columns(2)
+
+    with col_dl1:
+        st.download_button(
+            label=f"TXT 저장 ({done_count}/15 비트)",
+            data=all_text,
+            file_name=f"screenplay_{genre}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+
+    with col_dl2:
+        try:
+            docx_bytes = make_docx()
+            st.download_button(
+                label=f"DOCX 저장 ({done_count}/15 비트)",
+                data=docx_bytes,
+                file_name=f"screenplay_{genre}_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True,
+            )
+        except ImportError:
+            st.caption("DOCX: python-docx 설치 필요 (pip install python-docx)")
 
 # ═══════════════════════════════════════════════════════════
 # RESET
