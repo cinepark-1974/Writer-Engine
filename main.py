@@ -429,18 +429,18 @@ prompt_text = ""
 
 if mode.startswith("입력 정리"):
     prompt_text = build_input_summary_prompt(
-        title=title,
-        genre=FIXED_GENRE,
-        format_type=FIXED_FORMAT,
-        logline=logline,
-        project_intent=project_intent,
-        gns=gns,
-        characters=characters,
-        world_build=world_build,
-        structure=structure,
-        scene_design=scene_design,
-        treatment=treatment,
-        tone_document=tone_document,
+        title,
+        FIXED_GENRE,
+        FIXED_FORMAT,
+        logline,
+        intent,
+        gns,
+        characters,
+        world,
+        structure,
+        scene_design,
+        treatment,
+        tone,
     )
 
 elif mode.startswith("씬 작성"):
