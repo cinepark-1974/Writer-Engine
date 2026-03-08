@@ -1,13 +1,18 @@
 SYSTEM_PROMPT = """
 You are BLUE JEANS WRITER ENGINE.
 
-You are a professional screenplay writing engine.
+You are a professional screenplay writing engine for a writer-producer.
+Your role is to turn development material into dramatically effective screenplay writing.
 
-Core rules:
-- Every scene must have a dramatic function
-- Avoid empty dialogue
-- Preserve character voice
-- Protect story theme
+CORE RULES
+1. Every scene must have a dramatic function.
+2. Avoid empty dialogue.
+3. Preserve character voice.
+4. Protect story theme.
+5. Maintain genre effect.
+6. Keep cinematic clarity.
+7. Avoid purposeless exposition.
+8. Keep endings emotionally earned.
 """
 
 
@@ -30,44 +35,51 @@ def build_input_summary_prompt(
     tone,
 ):
     return f"""
-PROJECT
-{title}
+[MODE]
+Input Summary
 
-GENRE
-{genre}
+[PROJECT]
+Title: {clean(title)}
+Genre: {clean(genre)}
+Format: {clean(format_type)}
 
-FORMAT
-{format_type}
-
-LOG LINE
+[LOG LINE]
 {clean(logline)}
 
-PROJECT INTENT
+[PROJECT INTENT]
 {clean(intent)}
 
-GOAL NEED STRATEGY
+[GOAL / NEED / STRATEGY]
 {clean(gns)}
 
-CHARACTER
+[CHARACTER]
 {clean(characters)}
 
-WORLD
+[WORLD BUILD]
 {clean(world)}
 
-STRUCTURE
+[STRUCTURE]
 {clean(structure)}
 
-SCENE DESIGN
+[SCENE DESIGN]
 {clean(scene_design)}
 
-TREATMENT
+[TREATMENT]
 {clean(treatment)}
 
-TONE
+[TONE DOCUMENT]
 {clean(tone)}
 
-TASK
-Summarize the development material for screenplay writing.
+[TASK]
+Read the pasted development materials and reorganize them into a practical screenplay development summary.
+
+[OUTPUT]
+1. Project Core
+2. Dramatic Engine
+3. Character Engine
+4. Genre Engine
+5. Ending Direction
+6. Missing / Weak Points
 """
 
 
@@ -84,35 +96,51 @@ def build_scene_draft_prompt(
     scene_request,
 ):
     return f"""
-PROJECT
-{title}
+[MODE]
+Scene Draft
 
-GENRE
-{genre}
+[PROJECT]
+Title: {clean(title)}
+Genre: {clean(genre)}
+Format: {clean(format_type)}
 
-LOG LINE
+[LOG LINE]
 {clean(logline)}
 
-CHARACTERS
+[CHARACTER]
 {clean(characters)}
 
-STRUCTURE
+[STRUCTURE]
 {clean(structure)}
 
-SCENE DESIGN
+[SCENE DESIGN]
 {clean(scene_design)}
 
-TREATMENT
+[TREATMENT]
 {clean(treatment)}
 
-TONE
+[TONE DOCUMENT]
 {clean(tone)}
 
-WRITE THIS SCENE
+[WRITE THIS SCENE]
 {clean(scene_request)}
 
-TASK
-Write the scene in screenplay style.
+[TASK]
+Write the requested scene or scene block in screenplay style.
+
+[REQUIREMENTS]
+- Write cinematically.
+- Every scene must have a function.
+- Every scene must move plot, character, relationship, emotion, theme, or genre effect.
+- Dialogue must avoid empty exposition.
+- Character voices must remain distinct.
+- Protect the ending direction without making it obvious.
+
+[OUTPUT]
+1. Screenplay Draft
+2. Scene Function Summary
+3. Risks / Weak Points
+4. Next Scene Hook
 """
 
 
@@ -122,17 +150,32 @@ def build_dialogue_polish_prompt(
     scene_text,
 ):
     return f"""
-GENRE
-{genre}
+[MODE]
+Dialogue Polish
 
-CHARACTER VOICE
+[GENRE]
+{clean(genre)}
+
+[CHARACTER VOICE NOTES]
 {clean(character_notes)}
 
-SCENE
+[SCENE TEXT]
 {clean(scene_text)}
 
-TASK
+[TASK]
 Rewrite the dialogue to improve subtext and character voice.
+
+[REQUIREMENTS]
+- Increase subtext.
+- Reduce exposition.
+- Preserve character distinction.
+- Add tension, restraint, or irony where appropriate.
+- Avoid generic lines.
+- Keep it performable and cinematic.
+
+[OUTPUT]
+1. Polished Dialogue Scene
+2. Brief Notes on What Improved
 """
 
 
@@ -142,21 +185,35 @@ def build_qc_prompt(
     text,
 ):
     return f"""
-GENRE
-{genre}
+[MODE]
+Quality Control
 
-THEME
+[GENRE]
+{clean(genre)}
+
+[THEME]
 {clean(theme)}
 
-TEXT
+[TEXT TO INSPECT]
 {clean(text)}
 
-TASK
-Evaluate the text.
+[TASK]
+Evaluate the text rigorously.
 
-Check:
-- structure
-- character voice
-- dialogue
-- theme
+[EVALUATE]
+1. Structure Fit
+2. Character Voice
+3. Dialogue
+4. Theme
+5. Genre Effect
+6. Emotional Clarity
+7. Weak Points
+8. Rewrite Priorities
+
+[OUTPUT]
+1. Score Summary
+2. Key Problems
+3. Best Elements to Keep
+4. Rewrite Priorities
+5. Concrete Fix Suggestions
 """
