@@ -1,6 +1,6 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v2.1
-# prompt.py — Beat-by-Beat Scene Writing
+# BLUE JEANS SCREENPLAY WRITER ENGINE v2.2
+# prompt.py — Act-Split Scene Plan + Beat-by-Beat Writing
 # © 2026 BLUE JEANS PICTURES
 # ─────────────────────────────────────────────────────────────
 
@@ -11,7 +11,7 @@ SYSTEM_PROMPT = """
 ━━ BRAND ━━
 - 모든 장면은 존재 이유를 가져야 한다.
 - 모든 대사는 욕망, 방어, 회피, 공격, 유혹, 압박 중 하나를 수행한다.
-- 3막/16비트/캐릭터아크/장르규칙이 내부에서 작동하되 결과물에 이론 용어를 노출하지 않는다.
+- 3막/16비트/캐릭터아크/장르규칙이 내부에서 작동하되 이론 용어를 노출하지 않는다.
 - 재미와 의미가 동시에 회수되는 설계.
 
 ━━ SCENE RULES ━━
@@ -20,9 +20,8 @@ SYSTEM_PROMPT = """
 
 ━━ DIALOGUE ━━
 - 각 인물은 고유한 말투 리듬, 문장 길이, 공격/방어 스타일을 가진다.
-- 캐릭터 바이블의 말투 규칙과 대사 샘플을 반드시 참조하라.
-- 누가 말해도 같은 말투이면 실패.
-- 설명성 대사 금지. 서브텍스트 필수.
+- 캐릭터 바이블의 말투 규칙·대사 샘플을 반드시 참조하라.
+- 누가 말해도 같은 말투이면 실패. 설명성 대사 금지. 서브텍스트 필수.
 
 ━━ FORMAT ━━
 한국어. 한국 표준 시나리오 서식:
@@ -51,105 +50,120 @@ GENRE_RULES = {
     "SF/판타지":   "세계 규칙이 인간 드라마의 은유. 경이감·규칙 대가·인간 앵커.",
 }
 
-
-# ─── 비트 정의 ───────────────────────────────
+# ─── 비트 정의 (15비트) ──────────────────
 
 BEATS_15 = [
-    {"no": 1,  "name": "Opening Image",     "act": "1막", "desc": "작품의 첫인상. 주인공의 일상·결핍·세계를 보여준다."},
-    {"no": 2,  "name": "Theme Stated",       "act": "1막", "desc": "테마가 대사나 상황으로 암시된다."},
-    {"no": 3,  "name": "Set-Up",             "act": "1막", "desc": "주인공의 세계, 결함, 관계, 규칙을 설정한다."},
-    {"no": 4,  "name": "Catalyst",           "act": "1막", "desc": "일상을 깨뜨리는 사건. 되돌릴 수 없는 변화 시작."},
-    {"no": 5,  "name": "Debate / Break into 2", "act": "1막→2막", "desc": "갈등. 거부와 수락. 2막으로의 전환."},
-    {"no": 6,  "name": "B-Story / Fun & Games", "act": "2막 전반", "desc": "서브플롯 시작. 장르의 약속을 이행하는 구간."},
-    {"no": 7,  "name": "Promise of the Premise", "act": "2막 전반", "desc": "장르 쾌감 본격 전개. 관객이 기대한 것을 보여준다."},
-    {"no": 8,  "name": "Midpoint",           "act": "2막 중간", "desc": "가짜 승리 또는 가짜 패배. 판이 뒤집힌다."},
-    {"no": 9,  "name": "Bad Guys Close In",  "act": "2막 후반", "desc": "적대 세력 강화. 내외부 압력 증가."},
-    {"no": 10, "name": "All Is Lost",        "act": "2막 후반", "desc": "가장 낮은 지점. 주인공이 모든 것을 잃는다."},
-    {"no": 11, "name": "Dark Night / Break into 3", "act": "2막→3막", "desc": "절망 속 깨달음. 3막 결심."},
-    {"no": 12, "name": "Finale — Gathering",  "act": "3막", "desc": "최종 전투 준비. 팀/자원 재결집."},
-    {"no": 13, "name": "Finale — Climax",     "act": "3막", "desc": "최고조 대결. 주인공의 선택이 테마를 증명한다."},
-    {"no": 14, "name": "Finale — Resolution",  "act": "3막", "desc": "여파. 대가. 새로운 질서."},
-    {"no": 15, "name": "Final Image",        "act": "3막", "desc": "Opening Image의 대구. 변화의 증거."},
+    {"no": 1,  "name": "Opening Image",          "act": "1막"},
+    {"no": 2,  "name": "Theme Stated",            "act": "1막"},
+    {"no": 3,  "name": "Set-Up",                  "act": "1막"},
+    {"no": 4,  "name": "Catalyst",                "act": "1막"},
+    {"no": 5,  "name": "Debate / Break into 2",   "act": "1막"},
+    {"no": 6,  "name": "B-Story / Fun & Games",   "act": "2막"},
+    {"no": 7,  "name": "Promise of the Premise",  "act": "2막"},
+    {"no": 8,  "name": "Midpoint",                "act": "2막"},
+    {"no": 9,  "name": "Bad Guys Close In",       "act": "2막"},
+    {"no": 10, "name": "All Is Lost",             "act": "2막"},
+    {"no": 11, "name": "Dark Night / Break into 3", "act": "2막"},
+    {"no": 12, "name": "Finale — Gathering",      "act": "3막"},
+    {"no": 13, "name": "Finale — Climax",         "act": "3막"},
+    {"no": 14, "name": "Finale — Resolution",     "act": "3막"},
+    {"no": 15, "name": "Final Image",             "act": "3막"},
 ]
+
+# 막별 비트 분류
+ACT_BEATS = {
+    "1막": [b for b in BEATS_15 if b["act"] == "1막"],       # Beat 1~5
+    "2막": [b for b in BEATS_15 if b["act"] == "2막"],       # Beat 6~11
+    "3막": [b for b in BEATS_15 if b["act"] == "3막"],       # Beat 12~15
+}
+
+ACT_SCENE_TARGETS = {
+    "1막": "약 30~35씬 (S#1 ~ S#약35)",
+    "2막": "약 40~45씬 (이전 막 이어서 번호 연속)",
+    "3막": "약 25~30씬 (이전 막 이어서 번호 연속, 총합 약 100씬)",
+}
 
 
 # ═══════════════════════════════════════════════════════════
-# 1. SCENE PLAN — 비트 기반 60~80씬 플랜
+# 1. SCENE PLAN — 막별 분할 생성
 # ═══════════════════════════════════════════════════════════
 
 def build_scene_plan_prompt(
+    act: str,
     genre: str, fmt: str,
     logline: str, intent: str, gns: str,
     characters: str, world: str, structure: str,
     scene_design: str, treatment: str, tone: str,
+    previous_plan: str = "",
 ) -> str:
     gr = GENRE_RULES.get(genre, "")
+    beats = ACT_BEATS[act]
+    target = ACT_SCENE_TARGETS[act]
+
     beats_text = "\n".join(
-        f"  Beat {b['no']}. {b['name']} ({b['act']}) — {b['desc']}"
-        for b in BEATS_15
+        f"  Beat {b['no']}. {b['name']}" for b in beats
     )
 
-    # 각 자료를 역할별로 명확히 배치
+    # 자료 조립
     parts = []
-    if logline:    parts.append(f"[LOGLINE]\n{logline}")
-    if intent:     parts.append(f"[기획의도]\n{intent}")
-    if gns:        parts.append(f"[GOAL/NEED/STRATEGY]\n{gns}")
-    if characters: parts.append(f"[캐릭터]\n{characters[:3000]}")
-    if world:      parts.append(f"[세계관]\n{world}")
-    if structure:  parts.append(f"[구조/시놉시스/비트시트]\n{structure}")
-    if scene_design: parts.append(f"[장면설계]\n{scene_design}")
-    if treatment:  parts.append(f"[트리트먼트]\n{treatment[:4000]}")
-    if tone:       parts.append(f"[톤 문서]\n{tone}")
+    if logline:      parts.append(f"[LOGLINE]\n{logline}")
+    if intent:       parts.append(f"[기획의도]\n{intent}")
+    if gns:          parts.append(f"[GNS]\n{gns}")
+    if characters:   parts.append(f"[캐릭터]\n{characters[:3000]}")
+    if world:        parts.append(f"[세계관]\n{world}")
+    if structure:    parts.append(f"[구조]\n{structure[:2000]}")
+    if scene_design: parts.append(f"[장면설계]\n{scene_design[:2000]}")
+    if treatment:    parts.append(f"[트리트먼트]\n{treatment[:4000]}")
+    if tone:         parts.append(f"[톤]\n{tone}")
     mat = "\n\n".join(parts) if parts else "[자료 없음]"
 
-    return f"""
-[TASK] 비트 기반 씬 플랜 생성
+    prev_block = ""
+    if previous_plan:
+        prev_block = (
+            f"\n[이전 막 씬 플랜 — 번호를 이어서 시작하라]\n"
+            f"{previous_plan[-3000:]}\n"
+        )
 
-아래 기획 자료를 분석하고, 15비트 구조에 맞춰 전체 씬 목록을 설계하라.
+    return f"""
+[TASK] {act} 씬 플랜 생성
+
+{act}에 해당하는 비트들의 씬 목록을 설계하라.
 
 [장르] {genre} — {gr}
 [포맷] {fmt}
 
-[15비트 구조]
+[{act} 비트]
 {beats_text}
 
 [기획 자료]
 {mat}
+{prev_block}
 
 [규칙]
-1. 영화 장편은 총 100씬 / 100분 / 100페이지 기준. 시리즈는 1화 기준 30~40씬.
-2. 각 비트당 6~7씬을 배치하라 (15비트 × 6~7씬 ≈ 100씬).
+1. {target}.
+2. 각 비트당 6~7씬을 배치하라.
 3. 1씬 = 1페이지 = 약 1분. 씬은 짧고 선명하게.
-4. 기획 자료의 트리트먼트·장면설계·비트시트를 적극 반영하라.
-5. 캐릭터 정보를 반영하여 누가 어디서 어떤 갈등을 겪는지 명확히 하라.
+4. 트리트먼트·장면설계·비트시트를 적극 반영하라.
+5. 캐릭터 정보를 반영하여 누가 어디서 어떤 갈등을 겪는지 명확히.
+6. 이전 막이 있으면 씬 번호를 이어서 시작하라.
+7. 모든 비트를 빠짐없이 포함하라.
 
 [OUTPUT FORMAT]
 
-먼저 1~2줄 핵심 요약 (테마·주인공아크·엔딩방향).
+---BEAT_{beats[0]['no']}_START---
+Beat {beats[0]['no']}. {beats[0]['name']} ({act})
+S#번호 | INT./EXT. 장소 — 시간 | 핵심인물 | 기능 (1줄)
+S#번호 | ...
+---BEAT_{beats[0]['no']}_END---
 
-그 다음 비트별 씬 목록:
+(이 막의 모든 비트 반복)
 
----BEAT_1_START---
-Beat 1. Opening Image (1막)
-S#1 | INT./EXT. 장소 — 시간 | 핵심인물 | 기능 (1줄)
-S#2 | INT./EXT. 장소 — 시간 | 핵심인물 | 기능 (1줄)
-...
----BEAT_1_END---
-
----BEAT_2_START---
-Beat 2. Theme Stated (1막)
-S#3 | ...
-...
----BEAT_2_END---
-
-(Beat 15까지 반복)
-
-마지막에: 총 씬 수 / 예상 러닝타임 / 가장 강한 장면 3개.
+마지막에: 이 막 씬 수 / 페이지 수.
 """.strip()
 
 
 # ═══════════════════════════════════════════════════════════
-# 2. WRITE BEAT — 비트 단위 씬 집필 (핵심)
+# 2. WRITE BEAT — 비트 단위 집필
 # ═══════════════════════════════════════════════════════════
 
 def build_write_beat_prompt(
@@ -166,63 +180,54 @@ def build_write_beat_prompt(
     gr = GENRE_RULES.get(genre, "")
     beat_info = BEATS_15[beat_number - 1] if 1 <= beat_number <= 15 else {}
 
-    # 캐릭터 바이블 — 매번 전문 포함 (최대 4000자)
     char_block = characters[:4000] if characters else "(캐릭터 정보 없음)"
-
-    # 톤 — 매번 포함
     tone_block = tone[:1500] if tone else ""
-
-    # 트리트먼트 — 전문 포함 (AI가 해당 비트에 맞는 부분을 참조)
     treat_block = treatment[:5000] if treatment else ""
 
-    # 직전 씬 — 연속성
     prev_block = ""
     if previous_scene_text:
-        prev_block = f"\n[직전 씬 — 연속성 유지]\n{previous_scene_text[-2500:]}\n"
+        prev_block = f"\n[직전 비트 마지막 부분 — 연속성 유지]\n{previous_scene_text[-2500:]}\n"
 
     return f"""
 [TASK] Beat {beat_number} 시나리오 집필 — {beat_info.get('name', '')} ({beat_info.get('act', '')})
 
-비트 설명: {beat_info.get('desc', '')}
-
 이 비트에 해당하는 모든 씬을 한국 표준 시나리오 서식으로 집필하라.
 
 [장르] {genre} — {gr}
-[로그라인] {logline or '(참조)'}
+[로그라인] {logline or '(씬 플랜 참조)'}
 
-[씬 플랜 — 이 비트의 씬 목록을 확인하고 정확히 따르라]
+[씬 플랜 — 이 비트의 씬을 찾아 정확히 따르라]
 {scene_plan}
 
-[캐릭터 바이블 — 각 인물의 말투·리듬·태도를 반드시 반영하라]
+[캐릭터 바이블 — 각 인물의 말투·리듬·태도를 반드시 반영]
 {char_block}
 
 [세계관]
 {world[:1500] if world else '(씬 플랜 참조)'}
 
-[트리트먼트 — Beat {beat_number}에 해당하는 내용을 찾아 참조하라]
+[트리트먼트 — Beat {beat_number}에 해당하는 내용 참조]
 {treat_block}
 
-{f"[톤 문서]{chr(10)}{tone_block}" if tone_block else ""}
+{f"[톤]{chr(10)}{tone_block}" if tone_block else ""}
 {prev_block}
 
 [RULES]
-1. 씬 플랜에서 Beat {beat_number}에 해당하는 씬들을 찾아 전부 집필하라.
-2. 각 씬은 독립적 장면이다 — 1씬 = 약 1페이지.
-3. 캐릭터 바이블의 말투 규칙·대사 샘플을 참조하여 각 인물의 보이스를 구분하라.
+1. 씬 플랜에서 Beat {beat_number}의 씬들을 찾아 전부 집필.
+2. 1씬 = 약 1페이지. 씬은 짧고 선명하게.
+3. 캐릭터 바이블의 말투·대사 샘플 참조 → 보이스 구분.
 4. desire → obstacle → conflict → turn → emotional shift → exit pressure
-5. 대사는 설명이 아니라 행동. 서브텍스트 필수.
-6. 각 씬 끝에 exit hook (다음 씬 연결 압력).
-7. 직전 씬과의 연속성을 유지하라.
+5. 대사 = 행동. 서브텍스트 필수. 설명성 대사 금지.
+6. 각 씬 끝에 exit hook.
+7. 직전 비트와의 연속성 유지.
 
 [OUTPUT]
-씬 플랜의 Beat {beat_number} 씬들을 순서대로 집필.
-각 씬 사이에 빈 줄 2개.
-마지막에 --- 후 내부 메모 (비트 요약 1줄 + 캐릭터 보이스 점검 1줄).
+Beat {beat_number}의 씬들을 순서대로 집필. 씬 사이 빈 줄 2개.
+마지막에 --- 후 내부 메모 1줄 (비트 요약 + 보이스 점검).
 """.strip()
 
 
 # ═══════════════════════════════════════════════════════════
-# 3. REWRITE BEAT — 비트 다시 쓰기
+# 3. REWRITE BEAT
 # ═══════════════════════════════════════════════════════════
 
 def build_rewrite_prompt(
@@ -237,9 +242,7 @@ def build_rewrite_prompt(
     user_inst = instruction.strip() if instruction else "극적 힘, 서브텍스트, 캐릭터 보이스, 장르 효능을 강화하라."
 
     return f"""
-[TASK] Beat {beat_number} 다시 쓰기
-
-지시: {user_inst}
+[TASK] Beat {beat_number} 다시 쓰기 — {user_inst}
 
 [장르] {genre} — {gr}
 
@@ -250,12 +253,8 @@ def build_rewrite_prompt(
 {current_text}
 
 [RULES]
-1. 강점 유지, 약점 개선
-2. 캐릭터 보이스 분리 강화
-3. 서브텍스트·장르 효능 강화
-4. 설명성 대사 제거
+1. 강점 유지, 약점 개선  2. 보이스 분리 강화  3. 서브텍스트·장르 효능 강화  4. 설명성 대사 제거
 
 [OUTPUT]
-개선된 시나리오 전문.
-마지막에 --- 후 변경 요약 (3줄).
+개선된 시나리오 전문. 마지막에 --- 후 변경 요약 3줄.
 """.strip()
