@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import datetime
 
 import streamlit as st
@@ -6,6 +7,7 @@ from anthropic import Anthropic
 
 from prompt import (
     SYSTEM_PROMPT,
+    GENRE_RULES,
     build_project_brief_prompt,
     build_story_matrix_prompt,
     build_unit_blueprint_prompt,
@@ -20,9 +22,8 @@ from prompt import (
 # ─────────────────────────────────────
 ANTHROPIC_MODEL = "claude-sonnet-4-6"
 
-# 장르 / 포맷 고정
-FIXED_GENRE = "느와르"
-FIXED_FORMAT = "시리즈"
+GENRE_OPTIONS = list(GENRE_RULES.keys())
+FORMAT_OPTIONS = ["영화 (장편)", "시리즈", "단편", "웹드라마"]
 
 # ─────────────────────────────────────
 # Page Config
@@ -59,7 +60,6 @@ st.markdown("""
     --heading: 'Paperlogy', 'Pretendard', sans-serif;
 }
 
-/* 기본 */
 html, body, [class*="css"] {
     font-family: var(--body);
     color: var(--t);
@@ -82,7 +82,6 @@ h1, h2, h3, h4, h5, h6 {
     font-family: var(--heading) !important;
 }
 
-/* 사이드바 숨김 */
 section[data-testid="stSidebar"] {
     display: none;
 }
@@ -171,6 +170,17 @@ section[data-testid="stSidebar"] {
     padding: 0.55rem 1.2rem !important;
 }
 
+/* 파일 업로더 */
+[data-testid="stFileUploader"], [data-testid="stFileUploader"] section {
+    background-color: var(--card) !important;
+    border-color: var(--card-border) !important;
+    border-radius: 8px !important;
+}
+
+[data-testid="stFileUploader"] section button {
+    color: var(--navy) !important;
+}
+
 /* Expander */
 .stExpander, details, details summary {
     background-color: var(--card) !important;
@@ -185,6 +195,29 @@ details[open] > div {
 
 .stExpander summary, .stExpander summary span {
     color: var(--t) !important;
+}
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 2px;
+}
+
+.stTabs [data-baseweb="tab"] {
+    background-color: var(--card) !important;
+    color: var(--dim) !important;
+    border-radius: 8px 8px 0 0 !important;
+    border: 1px solid var(--card-border) !important;
+    border-bottom: none !important;
+    font-family: var(--body) !important;
+    font-weight: 600 !important;
+    font-size: 0.85rem !important;
+    padding: 0.5rem 1rem !important;
+}
+
+.stTabs [aria-selected="true"] {
+    background-color: var(--light-bg) !important;
+    color: var(--navy) !important;
+    border-bottom: 2px solid var(--navy) !important;
 }
 
 /* Header */
@@ -227,7 +260,6 @@ details[open] > div {
     margin-bottom: 1.5rem;
 }
 
-/* UI blocks */
 .callout {
     background: var(--light-bg);
     border-left: 4px solid var(--navy);
@@ -277,6 +309,55 @@ details[open] > div {
     letter-spacing: 0.05em;
     opacity: 0.7;
 }
+
+/* 상태 표시 */
+.status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.7rem;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    font-family: var(--body);
+}
+
+.status-ready {
+    background: var(--g);
+    color: #fff;
+}
+
+.status-pending {
+    background: var(--dim);
+    color: #fff;
+}
+
+.status-active {
+    background: var(--navy);
+    color: var(--y);
+}
+
+/* 점수 카드 */
+.score-card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    padding: 0.8rem;
+    text-align: center;
+}
+
+.score-value {
+    font-size: 1.8rem;
+    font-weight: 900;
+    font-family: var(--display);
+    color: var(--navy);
+}
+
+.score-label {
+    font-size: 0.7rem;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -290,6 +371,9 @@ def init_session_state():
         "last_prompt": "",
         "last_mode": "",
         "saved_label": "",
+        "project_status": "INPUT READY",
+        "history": [],
+        "uploaded_material": "",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -320,7 +404,6 @@ def generate_with_anthropic(user_prompt, max_tokens=4000):
             "ANTHROPIC_API_KEY가 설정되지 않았습니다.\n"
             "Streamlit Secrets 또는 환경변수에 API 키를 등록해주세요."
         )
-
     try:
         response = client.messages.create(
             model=ANTHROPIC_MODEL,
@@ -330,16 +413,13 @@ def generate_with_anthropic(user_prompt, max_tokens=4000):
                 {"role": "user", "content": user_prompt}
             ],
         )
-
         parts = []
         for block in response.content:
             if hasattr(block, "text"):
                 parts.append(block.text)
-
         if not parts:
             return "[EMPTY RESPONSE]"
         return "\n".join(parts).strip()
-
     except Exception as e:
         return f"[ERROR]\n{str(e)}"
 
@@ -354,6 +434,25 @@ def build_revision_prompt(base_prompt, edited_text):
         f"{edited_text}"
     )
 
+def update_status(mode):
+    status_map = {
+        "Project Brief": "INPUT READY",
+        "Story Matrix": "MATRIX READY",
+        "Unit Blueprint": "BLUEPRINT READY",
+        "Section Draft": "DRAFTING",
+        "Dialogue Polish": "DRAFTING",
+        "Ending Control": "CHECKING",
+        "Quality Control": "CHECKING",
+    }
+    st.session_state["project_status"] = status_map.get(mode, "INPUT READY")
+
+def get_status_class(status):
+    if status in ("DRAFTING",):
+        return "status-active"
+    elif status in ("MATRIX READY", "BLUEPRINT READY", "EXPORT READY"):
+        return "status-ready"
+    return "status-pending"
+
 # ─────────────────────────────────────
 # Brand Header
 # ─────────────────────────────────────
@@ -366,10 +465,30 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+# ─────────────────────────────────────
+# Project Meta — 장르·포맷 선택
+# ─────────────────────────────────────
+col_meta1, col_meta2, col_meta3 = st.columns([2, 2, 1])
+
+with col_meta1:
+    selected_genre = st.selectbox("장르", GENRE_OPTIONS, index=3)  # 기본: 느와르
+
+with col_meta2:
+    selected_format = st.selectbox("포맷", FORMAT_OPTIONS, index=0)
+
+with col_meta3:
+    status = st.session_state["project_status"]
+    st.markdown(
+        f'<div style="padding-top:1.6rem">'
+        f'<span class="status-badge {get_status_class(status)}">{status}</span>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
 st.markdown(
     f'<div class="callout">'
     f'<div class="cl">PROJECT META</div>'
-    f'장르: {FIXED_GENRE} · 포맷: {FIXED_FORMAT}'
+    f'장르: {selected_genre} · 포맷: {selected_format}'
     f'</div>',
     unsafe_allow_html=True
 )
@@ -408,6 +527,28 @@ selected_label = st.selectbox(
 
 mode = MODE_OPTIONS[selected_label]
 st.session_state["last_mode"] = mode
+
+# ─────────────────────────────────────
+# 자료 업로드 (선택)
+# ─────────────────────────────────────
+st.markdown(
+    '<div class="section-header">📎 자료 첨부 <span class="en">MATERIAL UPLOAD</span></div>',
+    unsafe_allow_html=True
+)
+
+uploaded_file = st.file_uploader(
+    "기획서, 시놉시스, 트리트먼트, 기존 초고 등 (TXT/MD)",
+    type=["txt", "md"],
+    help="기존 자료가 있으면 업로드하세요. 프롬프트에 자동 삽입됩니다."
+)
+
+if uploaded_file is not None:
+    raw = uploaded_file.read().decode("utf-8", errors="ignore")
+    st.session_state["uploaded_material"] = raw
+    st.caption(f"📄 {uploaded_file.name} — {len(raw):,}자 로드 완료")
+else:
+    if not st.session_state["uploaded_material"]:
+        st.caption("첨부 자료 없음 — 직접 입력으로 진행합니다.")
 
 # ─────────────────────────────────────
 # Common Inputs
@@ -450,6 +591,24 @@ with col2:
     )
 
 # ─────────────────────────────────────
+# 첨부 자료 자동 삽입 헬퍼
+# ─────────────────────────────────────
+def _append_material(prompt_text: str) -> str:
+    """업로드 자료가 있으면 프롬프트에 첨부"""
+    material = st.session_state.get("uploaded_material", "")
+    if material:
+        prompt_text += (
+            "\n\n[ATTACHED MATERIAL — 기존 자료]\n"
+            "아래는 사용자가 첨부한 기존 기획 자료입니다. "
+            "이 자료의 설정, 인물, 구조, 분위기를 최대한 반영하되 "
+            "BLUE JEANS 기준으로 보강·발전시키십시오.\n\n"
+            f"{material[:12000]}"
+        )
+        if len(material) > 12000:
+            prompt_text += "\n\n[... 자료가 길어 12,000자까지만 포함되었습니다.]"
+    return prompt_text
+
+# ─────────────────────────────────────
 # Mode-specific Inputs
 # ─────────────────────────────────────
 st.markdown(
@@ -462,8 +621,8 @@ user_prompt = ""
 if mode == "Project Brief":
     user_prompt = build_project_brief_prompt(
         title=project_title,
-        genre=FIXED_GENRE,
-        format_type=FIXED_FORMAT,
+        genre=selected_genre,
+        format_type=selected_format,
         logline=logline,
         theme=theme,
         tone=tone,
@@ -486,7 +645,7 @@ elif mode == "Story Matrix":
 
     user_prompt = build_story_matrix_prompt(
         title=project_title,
-        genre=FIXED_GENRE,
+        genre=selected_genre,
         logline=logline,
         theme=theme,
         protagonist=protagonist_name,
@@ -620,7 +779,7 @@ elif mode == "Section Draft":
 
     user_prompt = build_section_screenplay_prompt(
         title=project_title,
-        genre=FIXED_GENRE,
+        genre=selected_genre,
         act_label=act_label,
         unit_no=int(unit_no),
         section_no=int(section_no),
@@ -646,7 +805,7 @@ elif mode == "Dialogue Polish":
     )
 
     user_prompt = build_dialogue_polish_prompt(
-        genre=FIXED_GENRE,
+        genre=selected_genre,
         character_voice_notes=character_voice_notes,
         scene_text=scene_text,
     )
@@ -688,10 +847,13 @@ elif mode == "Quality Control":
     )
 
     user_prompt = build_qc_prompt(
-        genre=FIXED_GENRE,
+        genre=selected_genre,
         theme=theme,
         scene_or_section_text=scene_or_section_text,
     )
+
+# 첨부 자료 삽입
+user_prompt = _append_material(user_prompt)
 
 # ─────────────────────────────────────
 # Prompt Actions
@@ -710,13 +872,25 @@ with col_a1:
 with col_a2:
     if st.button("생성 실행", type="primary", use_container_width=True):
         st.session_state["last_prompt"] = user_prompt
-        result = generate_with_anthropic(
-            user_prompt=user_prompt,
-            max_tokens=4000
-        )
+        update_status(mode)
+
+        with st.spinner("BLUE JEANS Writer Engine 생성 중..."):
+            result = generate_with_anthropic(
+                user_prompt=user_prompt,
+                max_tokens=4000
+            )
+
         st.session_state["generated_text"] = result
         st.session_state["edited_text"] = result
         st.session_state["saved_label"] = ""
+
+        # 히스토리 기록
+        st.session_state["history"].append({
+            "mode": mode,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "prompt_preview": user_prompt[:200],
+            "result_preview": result[:300],
+        })
 
 # ─────────────────────────────────────
 # Prompt Preview
@@ -748,14 +922,28 @@ if st.session_state["edited_text"]:
 
     edited_text = st.session_state["edited_text"]
 
-    st.download_button(
-        label="TXT 다운로드",
-        data=edited_text,
-        file_name=f"blue_jeans_writer_{mode.lower().replace(' ', '_')}.txt",
-        mime="text/plain",
-        use_container_width=True,
-    )
+    # 다운로드 버튼들
+    tab_dl1, tab_dl2 = st.tabs(["📄 TXT 다운로드", "📋 MD 다운로드"])
 
+    with tab_dl1:
+        st.download_button(
+            label="TXT 다운로드",
+            data=edited_text,
+            file_name=f"writer_engine_{mode.lower().replace(' ', '_')}_{project_title or 'draft'}.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+
+    with tab_dl2:
+        st.download_button(
+            label="MD 다운로드",
+            data=edited_text,
+            file_name=f"writer_engine_{mode.lower().replace(' ', '_')}_{project_title or 'draft'}.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
+
+    # 수정/재실행
     col_b1, col_b2 = st.columns(2)
 
     with col_b1:
@@ -769,10 +957,11 @@ if st.session_state["edited_text"]:
                 st.session_state["last_prompt"],
                 st.session_state["edited_text"]
             )
-            result = generate_with_anthropic(
-                user_prompt=revised_prompt,
-                max_tokens=4000
-            )
+            with st.spinner("재생성 중..."):
+                result = generate_with_anthropic(
+                    user_prompt=revised_prompt,
+                    max_tokens=4000
+                )
             st.session_state["generated_text"] = result
             st.session_state["edited_text"] = result
             st.session_state["saved_label"] = ""
@@ -785,6 +974,21 @@ else:
         '<div class="callout"><div class="cl">OUTPUT</div>아직 생성된 결과가 없습니다. 입력 후 생성 실행을 눌러주세요.</div>',
         unsafe_allow_html=True
     )
+
+# ─────────────────────────────────────
+# History
+# ─────────────────────────────────────
+if st.session_state["history"]:
+    with st.expander(f"작업 히스토리 ({len(st.session_state['history'])}건)", expanded=False):
+        for i, h in enumerate(reversed(st.session_state["history"])):
+            st.markdown(
+                f'<div class="card">'
+                f'<div class="cl">#{len(st.session_state["history"]) - i} · {h["mode"]} · {h["timestamp"]}</div>'
+                f'<div style="font-size:0.82rem;color:var(--dim);margin-top:0.3rem">'
+                f'{h["result_preview"][:150]}...</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
 
 # ─────────────────────────────────────
 # System Prompt
