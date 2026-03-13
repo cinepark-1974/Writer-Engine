@@ -27,7 +27,7 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────
-# CSS
+# Custom CSS (Creator Engine 동일 톤)
 # ─────────────────────────────────────
 st.markdown("""
 <style>
@@ -39,6 +39,7 @@ st.markdown("""
     --navy: #191970; --y: #FFCB05; --bg: #F7F7F5;
     --card: #FFFFFF; --card-border: #E2E2E0; --t: #1A1A2E;
     --g: #2EC484; --dim: #8E8E99; --light-bg: #EEEEF6;
+    --serif: 'Paperlogy', 'Noto Serif KR', 'Georgia', serif;
     --display: 'Playfair Display', 'Paperlogy', 'Georgia', serif;
     --body: 'Pretendard', -apple-system, sans-serif;
     --heading: 'Paperlogy', 'Pretendard', sans-serif;
@@ -207,6 +208,7 @@ def get_client():
     return Anthropic(api_key=api_key) if api_key else None
 
 def stream_ai(prompt: str, tokens: int = 8000):
+    """스트리밍 제너레이터 — st.write_stream에 직접 전달."""
     client = get_client()
     if not client:
         yield "❌ ANTHROPIC_API_KEY가 설정되지 않았습니다."
@@ -224,15 +226,96 @@ def stream_ai(prompt: str, tokens: int = 8000):
 
 def full_plan() -> str:
     """3막 플랜 합침."""
-    parts = []
-    for act in ["1막", "2막", "3막"]:
-        p = st.session_state.get(f"plan_{act}", "")
-        if p:
-            parts.append(p)
-    return "\n\n".join(parts)
+    return "\n\n".join(
+        st.session_state.get(f"plan_{a}", "")
+        for a in ["1막", "2막", "3막"]
+        if st.session_state.get(f"plan_{a}", "")
+    )
 
 def plan_ready() -> bool:
     return all(st.session_state.get(f"plan_{a}", "").strip() for a in ["1막", "2막", "3막"])
+
+def make_docx_bytes(genre: str, beats_done: dict) -> bytes:
+    """시나리오 DOCX 생성."""
+    from docx import Document as DocxDocument
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from io import BytesIO
+
+    doc = DocxDocument()
+    style = doc.styles["Normal"]
+    style.font.name = "맑은 고딕"
+    style.font.size = Pt(10)
+    style.paragraph_format.space_after = Pt(4)
+
+    # 커버
+    for _ in range(4):
+        doc.add_paragraph("")
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run("BLUE JEANS PICTURES")
+    r.font.size = Pt(11)
+    r.font.color.rgb = RGBColor(0x19, 0x19, 0x70)
+    r.bold = True
+
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run("SCREENPLAY")
+    r.font.size = Pt(32)
+    r.font.color.rgb = RGBColor(0x19, 0x19, 0x70)
+    r.bold = True
+
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run(f"Writer Engine v2.2  ·  {genre}  ·  {len(beats_done)}/15 비트")
+    r.font.size = Pt(10)
+    r.font.color.rgb = RGBColor(0x8E, 0x8E, 0x99)
+
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run(datetime.now().strftime("%Y-%m-%d"))
+    r.font.size = Pt(9)
+    r.font.color.rgb = RGBColor(0x8E, 0x8E, 0x99)
+
+    doc.add_page_break()
+
+    # 비트별 본문
+    current_act = ""
+    for b_no in sorted(beats_done.keys()):
+        b_info = BEATS_15[b_no - 1]
+
+        # ACT 전환 시 페이지 구분
+        if b_info["act"] != current_act:
+            if current_act:
+                doc.add_page_break()
+            current_act = b_info["act"]
+            h = doc.add_heading(current_act, level=1)
+            for run in h.runs:
+                run.font.color.rgb = RGBColor(0x19, 0x19, 0x70)
+                run.font.size = Pt(18)
+
+        # Beat 헤더
+        h = doc.add_heading(f"Beat {b_no}. {b_info['name']}", level=2)
+        for run in h.runs:
+            run.font.color.rgb = RGBColor(0x19, 0x19, 0x70)
+
+        # 본문
+        text = beats_done[b_no]
+        for line in text.split("\n"):
+            doc.add_paragraph(line)
+
+    # Footer
+    doc.add_page_break()
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run("© 2026 BLUE JEANS PICTURES · Writer Engine v2.2")
+    r.font.size = Pt(8)
+    r.font.color.rgb = RGBColor(0x8E, 0x8E, 0x99)
+
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
 
 
 # ═══════════════════════════════════════════════════════════
@@ -248,14 +331,14 @@ st.markdown(
 )
 
 # ═══════════════════════════════════════════════════════════
-# STEP 1 — 자료 입력
+# STEP 1 — 자료 입력 (Creator Engine 9개 항목)
 # ═══════════════════════════════════════════════════════════
 st.markdown(
     '<div class="section-header">📥 STEP 1 · 자료 입력 <span class="en">PASTE FROM CREATOR ENGINE</span></div>',
     unsafe_allow_html=True,
 )
 st.markdown(
-    '<div class="small-meta">Creator Engine 결과를 항목별로 복사해서 붙여넣으세요.</div>',
+    '<div class="small-meta">Creator Engine 결과를 항목별로 복사해서 붙여넣으세요. 필요한 칸만 채워도 됩니다.</div>',
     unsafe_allow_html=True,
 )
 
@@ -270,40 +353,41 @@ with col_g2:
 
 st.session_state["logline"] = st.text_area(
     "Logline", value=st.session_state["logline"],
-    height=60, placeholder="로그라인 복사")
+    height=60, placeholder="Logline Pack (5종 중 택1 또는 전체)")
 
 col_i1, col_i2 = st.columns(2)
 with col_i1:
     st.session_state["intent"] = st.text_area(
-        "기획의도", value=st.session_state["intent"],
-        height=100, placeholder="기획의도 복사")
+        "기획의도 (Project Intent)", value=st.session_state["intent"],
+        height=100, placeholder="소재 / 장르 / 시장 / Pitch / Theme")
     st.session_state["gns"] = st.text_area(
         "Goal / Need / Strategy", value=st.session_state["gns"],
-        height=100, placeholder="GNS 복사")
+        height=100, placeholder="Goal / Need / Strategy")
     st.session_state["world"] = st.text_area(
-        "세계관", value=st.session_state["world"],
-        height=100, placeholder="World Building 복사")
+        "세계관 (World Build)", value=st.session_state["world"],
+        height=100, placeholder="시간 / 공간 / 규칙 / 금기 / 권력구조")
 with col_i2:
     st.session_state["characters"] = st.text_area(
-        "캐릭터 (바이블 포함) ← 가장 중요", value=st.session_state["characters"],
-        height=300, placeholder="캐릭터 + 바이블 전체 복사")
+        "캐릭터 + 바이블 ← 가장 중요", value=st.session_state["characters"],
+        height=300, placeholder="캐릭터(4인) + 바이블(백스토리/말투규칙/대사샘플/관계태도/변화궤적)")
 
 st.session_state["structure"] = st.text_area(
-    "구조 / 시놉시스 / 비트시트", value=st.session_state["structure"],
-    height=120, placeholder="Synopsis, Storyline, Beat Sheet 복사")
+    "구조 (Synopsis + Storyline + Beat Sheet)", value=st.session_state["structure"],
+    height=120, placeholder="Synopsis 1P / Storyline 8시퀀스 / 15-Beat Sheet / 3막 진단")
 
 st.session_state["scene_design"] = st.text_area(
-    "장면 설계", value=st.session_state["scene_design"],
-    height=120, placeholder="Scene Design 복사")
+    "장면 설계 (Scene Design)", value=st.session_state["scene_design"],
+    height=120, placeholder="핵심 장면 15~18개 + Scene Map")
 
 st.session_state["treatment"] = st.text_area(
-    "트리트먼트", value=st.session_state["treatment"],
-    height=160, placeholder="Treatment (1막/2막/3막) 복사")
+    "트리트먼트 (Treatment)", value=st.session_state["treatment"],
+    height=160, placeholder="16비트 줄글 (1막/2막/3막)")
 
 st.session_state["tone"] = st.text_area(
-    "톤 문서", value=st.session_state["tone"],
-    height=80, placeholder="Tone Document 복사")
+    "톤 문서 (Tone Document)", value=st.session_state["tone"],
+    height=80, placeholder="비주얼/페이싱/대사규칙/모티프/사운드/금기/Writer지시")
 
+# API 상태
 if get_client():
     st.success("API 연결 준비 완료")
 else:
@@ -312,22 +396,21 @@ else:
 has_material = any(st.session_state[f].strip() for f in FIELDS)
 
 # ═══════════════════════════════════════════════════════════
-# SCENE PLAN — 막별 3회 분할
+# SCENE PLAN — 3막 분할 (100씬 / 100분)
 # ═══════════════════════════════════════════════════════════
 st.markdown(
-    '<div class="section-header">🗺️ 씬 플랜 <span class="en">SCENE PLAN · 3-ACT SPLIT</span></div>',
+    '<div class="section-header">🗺️ 씬 플랜 <span class="en">SCENE PLAN · 100 SCENES / 3-ACT SPLIT</span></div>',
     unsafe_allow_html=True,
 )
 
 if has_material:
     st.markdown(
         '<div class="small-meta">'
-        '100씬/100분 기준. 막별로 나눠서 생성합니다 (1막 → 2막 → 3막 순서).'
+        '100씬/100분 기준. 1막 → 2막 → 3막 순서로 생성합니다.'
         '</div>',
         unsafe_allow_html=True,
     )
 
-    # ── 공통 인자 ──
     plan_kw = dict(
         genre=genre, fmt=fmt,
         logline=st.session_state["logline"],
@@ -341,36 +424,32 @@ if has_material:
         tone=st.session_state["tone"],
     )
 
-    # ── 3개 버튼 ──
     col_p1, col_p2, col_p3 = st.columns(3)
 
     with col_p1:
-        plan1_done = bool(st.session_state["plan_1막"])
+        done1 = bool(st.session_state["plan_1막"])
         btn1 = st.button(
-            f"{'✅ ' if plan1_done else ''}1막 플랜 (Beat 1~5)",
-            type="primary" if not plan1_done else "secondary",
+            f"{'✅ ' if done1 else ''}1막 플랜 (Beat 1~5)",
+            type="primary" if not done1 else "secondary",
             use_container_width=True,
         )
-
     with col_p2:
-        plan2_done = bool(st.session_state["plan_2막"])
+        done2 = bool(st.session_state["plan_2막"])
         btn2 = st.button(
-            f"{'✅ ' if plan2_done else ''}2막 플랜 (Beat 6~11)",
-            type="primary" if plan1_done and not plan2_done else "secondary",
+            f"{'✅ ' if done2 else ''}2막 플랜 (Beat 6~11)",
+            type="primary" if done1 and not done2 else "secondary",
             use_container_width=True,
-            disabled=not plan1_done,
+            disabled=not done1,
         )
-
     with col_p3:
-        plan3_done = bool(st.session_state["plan_3막"])
+        done3 = bool(st.session_state["plan_3막"])
         btn3 = st.button(
-            f"{'✅ ' if plan3_done else ''}3막 플랜 (Beat 12~15)",
-            type="primary" if plan2_done and not plan3_done else "secondary",
+            f"{'✅ ' if done3 else ''}3막 플랜 (Beat 12~15)",
+            type="primary" if done2 and not done3 else "secondary",
             use_container_width=True,
-            disabled=not plan2_done,
+            disabled=not done2,
         )
 
-    # ── 생성 실행 ──
     if btn1:
         prompt = build_scene_plan_prompt(act="1막", **plan_kw, previous_plan="")
         st.markdown('<div class="act-tag">1막 씬 플랜 생성 중…</div>', unsafe_allow_html=True)
@@ -383,10 +462,7 @@ if has_material:
         st.rerun()
 
     if btn2:
-        prompt = build_scene_plan_prompt(
-            act="2막", **plan_kw,
-            previous_plan=st.session_state["plan_1막"],
-        )
+        prompt = build_scene_plan_prompt(act="2막", **plan_kw, previous_plan=st.session_state["plan_1막"])
         st.markdown('<div class="act-tag">2막 씬 플랜 생성 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt))
         st.session_state["plan_2막"] = result
@@ -395,16 +471,13 @@ if has_material:
 
     if btn3:
         prev = st.session_state["plan_1막"] + "\n\n" + st.session_state["plan_2막"]
-        prompt = build_scene_plan_prompt(
-            act="3막", **plan_kw,
-            previous_plan=prev,
-        )
+        prompt = build_scene_plan_prompt(act="3막", **plan_kw, previous_plan=prev)
         st.markdown('<div class="act-tag">3막 씬 플랜 생성 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt))
         st.session_state["plan_3막"] = result
         st.rerun()
 
-    # ── 플랜 상태 표시 ──
+    # 플랜 표시
     for act in ["1막", "2막", "3막"]:
         p = st.session_state.get(f"plan_{act}", "")
         if p:
@@ -414,11 +487,9 @@ if has_material:
     if plan_ready():
         st.markdown(
             '<div class="callout"><div class="cl">PLAN COMPLETE</div>'
-            '3막 씬 플랜 완성. 아래에서 비트별 집필을 시작하세요.'
-            '</div>',
+            '3막 씬 플랜 완성. 아래에서 비트별 집필을 시작하세요.</div>',
             unsafe_allow_html=True,
         )
-        # ── 씬 플랜 중간 저장 ──
         plan_all = full_plan()
         st.download_button(
             label="씬 플랜 TXT 저장",
@@ -430,8 +501,7 @@ if has_material:
 else:
     st.markdown(
         '<div class="callout"><div class="cl">WAITING</div>'
-        '위에 기획 자료를 붙여넣으면 시작할 수 있습니다.'
-        '</div>',
+        '위에 기획 자료를 붙여넣으면 시작할 수 있습니다.</div>',
         unsafe_allow_html=True,
     )
 
@@ -448,14 +518,16 @@ if plan_ready():
     done = st.session_state["beats_done"]
     combined_plan = full_plan()
 
-    # ── 완료 비트 표시 ──
+    # 완료 비트 표시
     for b_no in sorted(done.keys()):
         b_info = BEATS_15[b_no - 1]
-        with st.expander(f"Beat {b_no}. {b_info['name']} ({b_info['act']}) ✅",
-                         expanded=(b_no == max(done.keys()))):
+        with st.expander(
+            f"{b_info['act']} — Beat {b_no}. {b_info['name']} ✅",
+            expanded=(b_no == max(done.keys())),
+        ):
             st.text(done[b_no])
 
-    # ── 현재 비트 정보 ──
+    # 현재 비트 정보
     if cur <= 15:
         b_info = BEATS_15[cur - 1]
         st.markdown(
@@ -465,7 +537,6 @@ if plan_ready():
             unsafe_allow_html=True,
         )
 
-    # ── 버튼 ──
     col_b1, col_b2 = st.columns(2)
     with col_b1:
         write_btn = st.button(
@@ -484,13 +555,12 @@ if plan_ready():
     if rewrite_btn:
         rewrite_note = st.text_input(
             "수정 지시 (비워두면 전체 강화)",
-            placeholder="예: 대사를 더 차갑게 / 긴장감 올려줘",
+            placeholder="예: 대사를 더 차갑게 / 긴장감 올려줘 / Hook 강화",
         )
 
-    # ── 집필 ──
+    # 집필
     if write_btn and cur <= 15:
         prev_text = done[cur - 1] if (cur > 1 and (cur - 1) in done) else ""
-
         prompt = build_write_beat_prompt(
             genre=genre, beat_number=cur,
             scene_plan=combined_plan,
@@ -501,15 +571,13 @@ if plan_ready():
             logline=st.session_state["logline"],
             world=st.session_state["world"],
         )
-
         st.markdown(f'<div class="beat-tag">Beat {cur} 집필 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=8000))
-
         st.session_state["beats_done"][cur] = result
         st.session_state["current_beat"] = cur + 1
         st.rerun()
 
-    # ── 다시 쓰기 ──
+    # 다시 쓰기
     if rewrite_btn and done:
         last_beat = max(done.keys())
         prompt = build_rewrite_prompt(
@@ -524,126 +592,52 @@ if plan_ready():
         st.rerun()
 
 # ═══════════════════════════════════════════════════════════
-# DOWNLOAD — TXT + DOCX
+# DOWNLOAD — TXT + DOCX (수시 저장)
 # ═══════════════════════════════════════════════════════════
-if st.session_state["beats_done"]:
+if st.session_state.get("beats_done"):
     st.markdown(
         '<div class="section-header">📄 다운로드 <span class="en">EXPORT · SAVE ANYTIME</span></div>',
         unsafe_allow_html=True,
     )
 
     done_count = len(st.session_state["beats_done"])
-
     st.markdown(
-        f'<div class="callout"><div class="cl">DATA SAFE</div>'
-        f'{done_count}/15 비트 완료. 페이지를 새로고침하면 데이터가 사라집니다. '
-        f'아래 버튼으로 수시로 저장하세요.'
-        f'</div>',
+        f'<div class="callout"><div class="cl">DATA</div>'
+        f'{done_count}/15 비트 완료. 새로고침하면 데이터가 사라집니다. 수시로 저장하세요.</div>',
         unsafe_allow_html=True,
     )
 
-    # ── TXT 조립 ──
+    # TXT
     parts = []
     for b_no in sorted(st.session_state["beats_done"].keys()):
         b_info = BEATS_15[b_no - 1]
         parts.append(
-            f"{'='*60}\n"
-            f"{b_info['act']} — Beat {b_no}. {b_info['name']}\n"
-            f"{'='*60}\n\n"
+            f"{'='*60}\n{b_info['act']} — Beat {b_no}. {b_info['name']}\n{'='*60}\n\n"
             f"{st.session_state['beats_done'][b_no]}"
         )
     all_text = "\n\n\n".join(parts)
 
-    # ── DOCX 생성 ──
-    def make_docx() -> bytes:
-        from docx import Document as DocxDocument
-        from docx.shared import Pt, Inches, RGBColor
-        from docx.enum.text import WD_ALIGN_PARAGRAPH
-
-        doc = DocxDocument()
-
-        # 스타일 설정
-        style = doc.styles["Normal"]
-        style.font.name = "맑은 고딕"
-        style.font.size = Pt(10)
-        style.paragraph_format.space_after = Pt(4)
-
-        # 커버
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r = p.add_run("BLUE JEANS PICTURES")
-        r.font.size = Pt(10)
-        r.font.color.rgb = RGBColor(0x19, 0x19, 0x70)
-        r.bold = True
-
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r = p.add_run("WRITER ENGINE")
-        r.font.size = Pt(28)
-        r.font.color.rgb = RGBColor(0x19, 0x19, 0x70)
-        r.bold = True
-
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r = p.add_run(f"장르: {genre}  |  {done_count}/15 비트")
-        r.font.size = Pt(10)
-        r.font.color.rgb = RGBColor(0x8E, 0x8E, 0x99)
-
-        doc.add_page_break()
-
-        # 비트별 내용
-        for b_no in sorted(st.session_state["beats_done"].keys()):
-            b_info = BEATS_15[b_no - 1]
-
-            # ACT + Beat 헤더
-            h = doc.add_heading(
-                f"{b_info['act']} — Beat {b_no}. {b_info['name']}",
-                level=1,
-            )
-            for run in h.runs:
-                run.font.color.rgb = RGBColor(0x19, 0x19, 0x70)
-
-            # 본문
-            text = st.session_state["beats_done"][b_no]
-            for line in text.split("\n"):
-                if line.strip():
-                    doc.add_paragraph(line)
-                else:
-                    doc.add_paragraph("")
-
-            doc.add_page_break()
-
-        # 바이트로
-        from io import BytesIO
-        buf = BytesIO()
-        doc.save(buf)
-        buf.seek(0)
-        return buf.getvalue()
-
-    # ── 다운로드 버튼 ──
     col_dl1, col_dl2 = st.columns(2)
-
     with col_dl1:
         st.download_button(
-            label=f"TXT 저장 ({done_count}/15 비트)",
+            label=f"TXT 저장 ({done_count}/15)",
             data=all_text,
             file_name=f"screenplay_{genre}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
             mime="text/plain",
             use_container_width=True,
         )
-
     with col_dl2:
         try:
-            docx_bytes = make_docx()
+            docx_bytes = make_docx_bytes(genre, st.session_state["beats_done"])
             st.download_button(
-                label=f"DOCX 저장 ({done_count}/15 비트)",
+                label=f"DOCX 저장 ({done_count}/15)",
                 data=docx_bytes,
                 file_name=f"screenplay_{genre}_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 use_container_width=True,
             )
         except ImportError:
-            st.caption("DOCX: python-docx 설치 필요 (pip install python-docx)")
+            st.caption("DOCX: python-docx 미설치 — pip install python-docx")
 
 # ═══════════════════════════════════════════════════════════
 # RESET
