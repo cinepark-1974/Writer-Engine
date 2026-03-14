@@ -207,7 +207,7 @@ def get_client():
     api_key = st.secrets.get("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_API_KEY"))
     return Anthropic(api_key=api_key) if api_key else None
 
-def stream_ai(prompt: str, tokens: int = 8000):
+def stream_ai(prompt: str, tokens: int = 16000):
     """스트리밍 제너레이터 — st.write_stream에 직접 전달."""
     client = get_client()
     if not client:
@@ -706,7 +706,7 @@ if plan_ready():
             world=st.session_state["world"],
         )
         st.markdown(f'<div class="beat-tag">Beat {cur} 집필 중…</div>', unsafe_allow_html=True)
-        result = st.write_stream(stream_ai(prompt, tokens=8000))
+        result = st.write_stream(stream_ai(prompt, tokens=16000))
         st.session_state["beats_done"][cur] = result
         st.session_state["current_beat"] = cur + 1
         st.rerun()
@@ -721,7 +721,7 @@ if plan_ready():
             instruction=rewrite_note,
         )
         st.markdown(f'<div class="beat-tag">Beat {last_beat} 다시 쓰는 중…</div>', unsafe_allow_html=True)
-        result = st.write_stream(stream_ai(prompt, tokens=8000))
+        result = st.write_stream(stream_ai(prompt, tokens=16000))
         st.session_state["beats_done"][last_beat] = result
         st.rerun()
 
