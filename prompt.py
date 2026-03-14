@@ -215,6 +215,7 @@ GENRE_RULES = {
     "드라마": {
         "en": "Drama",
         "core": "인간의 선택과 대가를 통해 진실에 도달하는 장르.",
+        "opening": "고요한 균열 — 평범한 일상인데 뭔가 하나가 어긋나 있다. 관객이 '왜?'라고 묻게 만들어라.",
         "items": [
             "emotional_truth", "character_depth", "moral_complexity",
             "relationship_dynamics", "vulnerability_escalation", "quiet_power",
@@ -227,6 +228,7 @@ GENRE_RULES = {
     "느와르": {
         "en": "Noir / Crime Noir",
         "core": "도덕적 모호함 속 타락과 생존 대가를 보여주는 장르.",
+        "opening": "끝에서 시작 — 주인공의 파국 직전/직후 또는 냉소적 내레이션으로 시작. 관객은 '어떻게 여기까지 왔나'를 궁금해한다.",
         "items": [
             "moral_ambiguity", "fatalistic_inevitability", "power_corruption",
             "betrayal_architecture", "paranoia_escalation", "dark_irony",
@@ -239,6 +241,7 @@ GENRE_RULES = {
     "스릴러": {
         "en": "Thriller / Crime",
         "core": "정보 비대칭과 압박 설계로 관객 불안을 지속시키는 장르.",
+        "opening": "사건의 결과부터 — 시체, 범죄 현장, 또는 사건의 여파를 먼저 보여주고 '어떻게?'로 끈다. 또는 평범한 일상이 갑자기 위협에 노출되는 순간.",
         "items": [
             "pressure_escalation", "information_asymmetry", "clock_or_deadline",
             "threat_visibility_control", "suspicion_transfer", "moral_compromise",
@@ -251,6 +254,7 @@ GENRE_RULES = {
     "코미디": {
         "en": "Comedy",
         "core": "웃음 메커니즘이 작동하는 장르. 떠드는 장르가 아니다.",
+        "opening": "결함 폭발 — 주인공의 결함이 3분 안에 사고를 친다. 관객이 이 캐릭터의 문제가 뭔지 즉시 안다.",
         "items": [
             "premise_engine", "comic_contradiction", "character_comic_flaw",
             "comic_escalation", "line_surprise", "status_comedy",
@@ -263,6 +267,7 @@ GENRE_RULES = {
     "멜로/로맨스": {
         "en": "Melodrama / Romance",
         "core": "갈망의 축적과 감정의 지연이 만드는 아픔과 회수의 장르.",
+        "opening": "운명적 접점 또는 이별 직후 — 두 사람이 스쳐가거나, 이미 끝난 관계에서 시작한다. 관객은 '이 둘은 어떻게 되는가'를 궁금해한다.",
         "items": [
             "desire_tension", "emotional_withholding", "longing_build",
             "vulnerability_reveal", "timing_misalignment", "intimacy_progression",
@@ -275,6 +280,7 @@ GENRE_RULES = {
     "호러": {
         "en": "Horror",
         "core": "공포의 예감과 축적으로 안전감을 체계적으로 파괴하는 장르.",
+        "opening": "프롤로그 킬 — 본편 시작 전에 누군가 죽거나 사라진다. 위협의 규칙을 관객에게 먼저 보여준다. 또는 평범한 공간에서 '뭔가 이상하다'는 감각.",
         "items": [
             "fear_anticipation", "uncertainty", "sensory_unease",
             "threat_design", "dread_pacing", "violation_of_safety",
@@ -287,6 +293,7 @@ GENRE_RULES = {
     "액션": {
         "en": "Action",
         "core": "물리적 목표와 대가 속에서 캐릭터 의지를 증명하는 장르.",
+        "opening": "미션 진행 중 — 설명 없이 체이스, 전투, 또는 작전 한복판에서 시작. 관객은 따라잡으며 몰입한다.",
         "items": [
             "physical_objective_clarity", "spatial_clarity", "tactical_reversal",
             "rising_physical_cost", "kinetic_identity", "consequence_visibility",
@@ -299,6 +306,7 @@ GENRE_RULES = {
     "SF/판타지": {
         "en": "Science Fiction / Fantasy",
         "core": "세계의 규칙이 인간 드라마의 은유로 작동하는 장르.",
+        "opening": "세계 규칙 한 장면 — 이 세계가 우리와 다르다는 것을 첫 이미지로 보여준다. 경이감 또는 위화감. 설명이 아니라 이미지로.",
         "items": [
             "world_rule_clarity", "wonder_value", "cost_of_rule",
             "ethical_implication", "rule_consistency", "novelty",
@@ -319,10 +327,14 @@ def _genre_text(genre: str) -> str:
 
     items_detail = "\n".join(f"  - {item}" for item in r["items"])
 
+    opening = r.get("opening", "")
+    opening_line = f"\n오프닝 전략: {opening}\n" if opening else ""
+
     return (
         f"[GENRE RULE: {genre} ({r['en']})]\n"
         f"\n"
         f"핵심 원칙: {r['core']}\n"
+        f"{opening_line}"
         f"\n"
         f"장르 필수 장치 (10개):\n"
         f"{items_detail}\n"
@@ -501,6 +513,25 @@ def build_write_beat_prompt(
     if previous_scene_text:
         prev_block = f"\n[직전 비트 마지막 부분 — 연속성 유지]\n{previous_scene_text[-2500:]}\n"
 
+    # Beat 1 = 오프닝 특별 지시
+    opening_block = ""
+    if beat_number == 1:
+        genre_data = GENRE_RULES.get(genre, {})
+        opening_strategy = genre_data.get("opening", "")
+        opening_block = f"""
+[⚡ 오프닝 특별 지시 — Beat 1 전용]
+이것은 관객이 가장 먼저 보는 장면이다. 첫 3분 안에 관객을 잡아야 한다.
+
+오프닝 전략: {opening_strategy}
+
+[오프닝 규칙]
+- 첫 씬의 첫 3줄이 관객의 호기심을 잡아야 한다. 설명으로 시작하지 마라.
+- 첫 장면에서 작품 전체의 테마를 깔아라.
+- 가능하면 대화의 중간, 또는 사건의 중간에서 시작하라 (Drop in the Middle).
+- 첫 씬이 끝났을 때 관객이 "다음에 무슨 일이 벌어지지?"라고 물어야 한다.
+- 주인공의 일상을 길게 보여주지 마라. 일상 속 균열을 보여줘라.
+"""
+
     return f"""
 [TASK] Beat {beat_number} 시나리오 집필 — {beat_info.get('name', '')} ({beat_info.get('act', '')})
 {beat_info.get('desc', '')}
@@ -510,7 +541,7 @@ def build_write_beat_prompt(
 [장르]
 {gr}
 [로그라인] {logline or '(씬 플랜 참조)'}
-
+{opening_block}
 [씬 플랜 — 이 비트의 씬을 찾아 정확히 따르라]
 {scene_plan}
 
