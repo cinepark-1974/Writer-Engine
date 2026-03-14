@@ -183,7 +183,7 @@ details[open] > div { background-color: var(--card) !important; }
 # ─────────────────────────────────────
 # Session State
 # ─────────────────────────────────────
-FIELDS = ["logline", "intent", "gns", "characters", "world",
+FIELDS = ["title", "logline", "intent", "gns", "characters", "world",
           "structure", "scene_design", "treatment", "tone"]
 
 for k, v in {
@@ -235,82 +235,212 @@ def full_plan() -> str:
 def plan_ready() -> bool:
     return all(st.session_state.get(f"plan_{a}", "").strip() for a in ["1막", "2막", "3막"])
 
-def make_docx_bytes(genre: str, beats_done: dict) -> bytes:
-    """시나리오 DOCX 생성."""
+def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
+    """시나리오 DOCX — 한국 표준 시나리오 서식."""
+    import re
     from docx import Document as DocxDocument
     from docx.shared import Pt, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
     from io import BytesIO
 
     doc = DocxDocument()
-    style = doc.styles["Normal"]
-    style.font.name = "맑은 고딕"
-    style.font.size = Pt(10)
-    style.paragraph_format.space_after = Pt(4)
 
-    # 커버
-    for _ in range(4):
+    # ── 페이지 설정 (A4, 20mm 마진) ──
+    from docx.shared import Mm
+    section = doc.sections[0]
+    section.page_width = Mm(210)
+    section.page_height = Mm(297)
+    section.top_margin = Mm(20)
+    section.bottom_margin = Mm(20)
+    section.left_margin = Mm(20)
+    section.right_margin = Mm(20)
+
+    # ── 기본 스타일: 함초롬바탕 10pt ──
+    style_normal = doc.styles["Normal"]
+    style_normal.font.name = "함초롬바탕"
+    style_normal.font.size = Pt(10)
+    style_normal.paragraph_format.space_after = Pt(2)
+    style_normal.paragraph_format.space_before = Pt(0)
+    # 한글 폰트 설정
+    rpr = style_normal.element.rPr
+    if rpr is None:
+        rpr = style_normal.element.makeelement(qn('w:rPr'), {})
+        style_normal.element.append(rpr)
+    rfonts = rpr.find(qn('w:rFonts'))
+    if rfonts is None:
+        rfonts = rpr.makeelement(qn('w:rFonts'), {})
+        rpr.append(rfonts)
+    rfonts.set(qn('w:eastAsia'), '함초롬바탕')
+
+    def add_text(text, bold=False, size=None, color=None, align=None):
+        p = doc.add_paragraph()
+        if align:
+            p.alignment = align
+        r = p.add_run(text)
+        r.font.name = "함초롬바탕"
+        rpr_elem = r._element.get_or_add_rPr()
+        rf = rpr_elem.find(qn('w:rFonts'))
+        if rf is None:
+            rf = rpr_elem.makeelement(qn('w:rFonts'), {})
+            rpr_elem.append(rf)
+        rf.set(qn('w:eastAsia'), '함초롬바탕')
+        if bold:
+            r.bold = True
+        if size:
+            r.font.size = size
+        if color:
+            r.font.color.rgb = color
+        return p
+
+    def add_scene_heading(text):
+        """씬 헤딩 — 볼드."""
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(12)
+        p.paragraph_format.space_after = Pt(4)
+        r = p.add_run(text)
+        r.bold = True
+        r.font.name = "함초롬바탕"
+        r.font.size = Pt(10)
+        return p
+
+    def add_dialogue(char_name, parenthetical, line):
+        """대사 — 캐릭터명 + 탭 + (지시) + 대사."""
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(4)
+        paren = f"({parenthetical})" if parenthetical else ""
+        full = f"{char_name}\t\t{paren}{line}"
+        r = p.add_run(full)
+        r.font.name = "함초롬바탕"
+        r.font.size = Pt(10)
+        return p
+
+    def add_action(text):
+        """지문 — 일반 텍스트."""
+        p = doc.add_paragraph()
+        r = p.add_run(text)
+        r.font.name = "함초롬바탕"
+        r.font.size = Pt(10)
+        return p
+
+    # ── 커버 페이지 ──
+    for _ in range(6):
         doc.add_paragraph("")
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run("BLUE JEANS PICTURES")
-    r.font.size = Pt(11)
-    r.font.color.rgb = RGBColor(0x19, 0x19, 0x70)
-    r.bold = True
-
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run("SCREENPLAY")
-    r.font.size = Pt(32)
-    r.font.color.rgb = RGBColor(0x19, 0x19, 0x70)
-    r.bold = True
-
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run(f"Writer Engine v2.2  ·  {genre}  ·  {len(beats_done)}/15 비트")
-    r.font.size = Pt(10)
-    r.font.color.rgb = RGBColor(0x8E, 0x8E, 0x99)
-
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run(datetime.now().strftime("%Y-%m-%d"))
-    r.font.size = Pt(9)
-    r.font.color.rgb = RGBColor(0x8E, 0x8E, 0x99)
-
+    add_text("시나리오", size=Pt(11), align=WD_ALIGN_PARAGRAPH.CENTER)
+    doc.add_paragraph("")
+    proj_title = title or f"<{genre}>"
+    add_text(proj_title, bold=True, size=Pt(24), align=WD_ALIGN_PARAGRAPH.CENTER)
+    doc.add_paragraph("")
+    doc.add_paragraph("")
+    add_text("기획/제작 | 블루진픽처스", size=Pt(10), align=WD_ALIGN_PARAGRAPH.CENTER,
+             color=RGBColor(0x8E, 0x8E, 0x99))
+    add_text(f"Writer Engine v2.2  ·  {len(beats_done)}/15 비트",
+             size=Pt(9), align=WD_ALIGN_PARAGRAPH.CENTER,
+             color=RGBColor(0x8E, 0x8E, 0x99))
     doc.add_page_break()
 
-    # 비트별 본문
+    # ── 본문 파싱 + 변환 ──
+    # 씬 헤딩 패턴: S#숫자. INT./EXT. 또는 그냥 INT./EXT.
+    heading_re = re.compile(r'^S?#?\d*\.?\s*(INT\.|EXT\.|INT\./EXT\.)\s*(.+)', re.IGNORECASE)
+    # 캐릭터명 패턴: 4칸 들여쓰기 + 짧은 이름 (2~10자)
+    char_re = re.compile(r'^\s{2,}([가-힣a-zA-Z\s]{1,15})\s*$')
+    # 괄호 지시
+    paren_re = re.compile(r'^\s{2,}\((.+?)\)\s*$')
+    # 구분선/내부메모 (출력 제외)
+    divider_re = re.compile(r'^(═{3,}|─{3,}|---)')
+
     current_act = ""
     for b_no in sorted(beats_done.keys()):
         b_info = BEATS_15[b_no - 1]
 
-        # ACT 전환 시 페이지 구분
+        # ACT 전환
         if b_info["act"] != current_act:
             if current_act:
                 doc.add_page_break()
             current_act = b_info["act"]
-            h = doc.add_heading(current_act, level=1)
-            for run in h.runs:
-                run.font.color.rgb = RGBColor(0x19, 0x19, 0x70)
-                run.font.size = Pt(18)
 
-        # Beat 헤더
-        h = doc.add_heading(f"Beat {b_no}. {b_info['name']}", level=2)
-        for run in h.runs:
-            run.font.color.rgb = RGBColor(0x19, 0x19, 0x70)
-
-        # 본문
         text = beats_done[b_no]
-        for line in text.split("\n"):
-            doc.add_paragraph(line)
+        lines = text.split("\n")
 
-    # Footer
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+
+            # 빈 줄
+            if not stripped:
+                i += 1
+                continue
+
+            # 구분선/내부메모 스킵
+            if divider_re.match(stripped):
+                i += 1
+                # 내부메모 블록 스킵
+                while i < len(lines) and lines[i].strip():
+                    i += 1
+                continue
+
+            # Beat 헤더 스킵 (프롬프트가 넣는 ACT — Beat 헤더)
+            if stripped.startswith("═") or "Beat " in stripped and "—" in stripped:
+                i += 1
+                continue
+
+            # 씬 헤딩
+            m = heading_re.match(stripped)
+            if m:
+                heading_text = m.group(1) + " " + m.group(2)
+                add_scene_heading(heading_text)
+                i += 1
+                continue
+
+            # 캐릭터명 + 대사 감지
+            cm = char_re.match(line)
+            if cm:
+                char_name = cm.group(1).strip()
+                parenthetical = ""
+                dialogue_lines = []
+                i += 1
+
+                # 괄호 지시 확인
+                if i < len(lines):
+                    pm = paren_re.match(lines[i])
+                    if pm:
+                        parenthetical = pm.group(1)
+                        i += 1
+
+                # 대사 수집 (들여쓰기 없거나 일반 텍스트)
+                while i < len(lines):
+                    dl = lines[i]
+                    ds = dl.strip()
+                    if not ds:
+                        break
+                    # 다음 씬헤딩이면 멈춤
+                    if heading_re.match(ds):
+                        break
+                    # 다음 캐릭터명이면 멈춤
+                    if char_re.match(dl):
+                        break
+                    dialogue_lines.append(ds)
+                    i += 1
+
+                # 대사 출력
+                if dialogue_lines:
+                    for dl in dialogue_lines:
+                        add_dialogue(char_name, parenthetical, dl)
+                        parenthetical = ""  # 첫 줄에만
+                else:
+                    add_dialogue(char_name, parenthetical, "")
+                continue
+
+            # 그 외 = 지문
+            add_action(stripped)
+            i += 1
+
+    # ── 푸터 ──
     doc.add_page_break()
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run("© 2026 BLUE JEANS PICTURES · Writer Engine v2.2")
-    r.font.size = Pt(8)
-    r.font.color.rgb = RGBColor(0x8E, 0x8E, 0x99)
+    add_text(f"© 2026 BLUE JEANS PICTURES · Writer Engine v2.2",
+             size=Pt(8), align=WD_ALIGN_PARAGRAPH.CENTER,
+             color=RGBColor(0x8E, 0x8E, 0x99))
 
     buf = BytesIO()
     doc.save(buf)
@@ -350,6 +480,10 @@ with col_g1:
 with col_g2:
     fmt = st.selectbox("포맷", ["영화 (장편)", "시리즈", "단편", "웹드라마"])
     st.session_state["fmt"] = fmt
+
+st.session_state["title"] = st.text_input(
+    "프로젝트 제목", value=st.session_state.get("title", ""),
+    placeholder="예: 물귀신")
 
 st.session_state["logline"] = st.text_area(
     "Logline", value=st.session_state["logline"],
@@ -628,7 +762,8 @@ if st.session_state.get("beats_done"):
         )
     with col_dl2:
         try:
-            docx_bytes = make_docx_bytes(genre, st.session_state["beats_done"])
+            docx_bytes = make_docx_bytes(genre, st.session_state["beats_done"],
+                                         title=st.session_state.get("title", ""))
             st.download_button(
                 label=f"DOCX 저장 ({done_count}/15)",
                 data=docx_bytes,
