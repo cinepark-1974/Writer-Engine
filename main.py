@@ -10,6 +10,7 @@ from prompt import (
     BEATS_15,
     ACT_BEATS,
     build_scene_plan_prompt,
+    build_extract_elements_prompt,
     build_write_beat_prompt,
     build_rewrite_prompt,
 )
@@ -188,6 +189,7 @@ FIELDS = ["title", "logline", "intent", "gns", "characters", "world",
 
 for k, v in {
     "plan_1막": "", "plan_2막": "", "plan_3막": "",
+    "story_elements": "",
     "beats_done": {},
     "current_beat": 1,
     "genre": "느와르",
@@ -632,6 +634,45 @@ if has_material:
             mime="text/plain",
             use_container_width=True,
         )
+
+        # ── 핵심 요소 추출 ──
+        st.markdown(
+            '<div class="section-header">🔍 핵심 요소 추출 <span class="en">STORY ELEMENTS</span></div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="small-meta">'
+            '기획 자료에서 맥거핀·캐릭터 비밀·핵심 장소·모티프·클라이맥스 설계를 추출합니다. '
+            '추출 결과는 매 비트 집필 시 자동으로 주입되어 누락을 방지합니다.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        elements_done = bool(st.session_state.get("story_elements", ""))
+
+        if st.button(
+            f"{'✅ ' if elements_done else ''}핵심 요소 추출",
+            type="primary" if not elements_done else "secondary",
+            use_container_width=True,
+        ):
+            extract_prompt = build_extract_elements_prompt(
+                genre=genre,
+                logline=st.session_state["logline"],
+                characters=st.session_state["characters"],
+                structure=st.session_state["structure"],
+                scene_design=st.session_state["scene_design"],
+                treatment=st.session_state["treatment"],
+                tone=st.session_state["tone"],
+                world=st.session_state["world"],
+            )
+            st.markdown('<div class="beat-tag">핵심 요소 추출 중…</div>', unsafe_allow_html=True)
+            result = st.write_stream(stream_ai(extract_prompt))
+            st.session_state["story_elements"] = result
+            st.rerun()
+
+        if elements_done:
+            with st.expander("핵심 요소 보기 ✅", expanded=False):
+                st.text(st.session_state["story_elements"])
 else:
     st.markdown(
         '<div class="callout"><div class="cl">WAITING</div>'
@@ -647,6 +688,9 @@ if plan_ready():
         '<div class="section-header">✍️ STEP 2 · 비트별 집필 <span class="en">WRITE BY BEAT</span></div>',
         unsafe_allow_html=True,
     )
+
+    if not st.session_state.get("story_elements"):
+        st.warning("⚠️ 핵심 요소 추출을 먼저 실행하세요. 맥거핀·비밀·모티프가 누락될 수 있습니다.")
 
     cur = st.session_state["current_beat"]
     done = st.session_state["beats_done"]
@@ -704,6 +748,7 @@ if plan_ready():
             previous_scene_text=prev_text,
             logline=st.session_state["logline"],
             world=st.session_state["world"],
+            story_elements=st.session_state.get("story_elements", ""),
         )
         st.markdown(f'<div class="beat-tag">Beat {cur} 집필 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=16000))
