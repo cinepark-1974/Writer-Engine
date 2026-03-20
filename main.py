@@ -15,7 +15,8 @@ from prompt import (
     build_rewrite_prompt,
 )
 
-ANTHROPIC_MODEL = "claude-sonnet-4-6"
+ANTHROPIC_MODEL_WRITE = "claude-opus-4-6"      # 집필 (비트 쓰기, 다시 쓰기) — 최고 품질
+ANTHROPIC_MODEL_PLAN  = "claude-sonnet-4-6"    # 구조 작업 (씬 플랜, 요소 추출) — 비용 효율
 
 # ─────────────────────────────────────
 # Page Config
@@ -209,15 +210,16 @@ def get_client():
     api_key = st.secrets.get("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_API_KEY"))
     return Anthropic(api_key=api_key) if api_key else None
 
-def stream_ai(prompt: str, tokens: int = 16000):
-    """스트리밍 제너레이터 — st.write_stream에 직접 전달."""
+def stream_ai(prompt: str, tokens: int = 16000, model: str = ""):
+    """스트리밍 제너레이터. model 미지정 시 WRITE 모델 사용."""
+    use_model = model or ANTHROPIC_MODEL_WRITE
     client = get_client()
     if not client:
         yield "❌ ANTHROPIC_API_KEY가 설정되지 않았습니다."
         return
     try:
         with client.messages.stream(
-            model=ANTHROPIC_MODEL, max_tokens=tokens,
+            model=use_model, max_tokens=tokens,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         ) as stream:
@@ -484,7 +486,7 @@ with col_g1:
                           index=genre_list.index(current_genre))
     st.session_state["genre"] = genre
 with col_g2:
-    fmt = st.selectbox("포맷", ["영화 (장편)", "시리즈", "단편", "웹드라마"])
+    fmt = "영화 (장편)"
     st.session_state["fmt"] = fmt
 
 st.session_state["title"] = st.text_input(
@@ -529,7 +531,7 @@ st.session_state["tone"] = st.text_area(
 
 # API 상태
 if get_client():
-    st.success("API 연결 준비 완료")
+    st.success(f"API 준비 완료 — 집필: {ANTHROPIC_MODEL_WRITE} · 구조: {ANTHROPIC_MODEL_PLAN}")
 else:
     st.warning("ANTHROPIC_API_KEY가 설정되지 않았습니다.")
 
@@ -593,7 +595,7 @@ if has_material:
     if btn1:
         prompt = build_scene_plan_prompt(act="1막", **plan_kw, previous_plan="")
         st.markdown('<div class="act-tag">1막 씬 플랜 생성 중…</div>', unsafe_allow_html=True)
-        result = st.write_stream(stream_ai(prompt))
+        result = st.write_stream(stream_ai(prompt, model=ANTHROPIC_MODEL_PLAN))
         st.session_state["plan_1막"] = result
         st.session_state["plan_2막"] = ""
         st.session_state["plan_3막"] = ""
@@ -604,7 +606,7 @@ if has_material:
     if btn2:
         prompt = build_scene_plan_prompt(act="2막", **plan_kw, previous_plan=st.session_state["plan_1막"])
         st.markdown('<div class="act-tag">2막 씬 플랜 생성 중…</div>', unsafe_allow_html=True)
-        result = st.write_stream(stream_ai(prompt))
+        result = st.write_stream(stream_ai(prompt, model=ANTHROPIC_MODEL_PLAN))
         st.session_state["plan_2막"] = result
         st.session_state["plan_3막"] = ""
         st.rerun()
@@ -613,7 +615,7 @@ if has_material:
         prev = st.session_state["plan_1막"] + "\n\n" + st.session_state["plan_2막"]
         prompt = build_scene_plan_prompt(act="3막", **plan_kw, previous_plan=prev)
         st.markdown('<div class="act-tag">3막 씬 플랜 생성 중…</div>', unsafe_allow_html=True)
-        result = st.write_stream(stream_ai(prompt))
+        result = st.write_stream(stream_ai(prompt, model=ANTHROPIC_MODEL_PLAN))
         st.session_state["plan_3막"] = result
         st.rerun()
 
@@ -670,7 +672,7 @@ if has_material:
                 world=st.session_state["world"],
             )
             st.markdown('<div class="beat-tag">핵심 요소 추출 중…</div>', unsafe_allow_html=True)
-            result = st.write_stream(stream_ai(extract_prompt))
+            result = st.write_stream(stream_ai(extract_prompt, model=ANTHROPIC_MODEL_PLAN))
             st.session_state["story_elements"] = result
             st.rerun()
 
