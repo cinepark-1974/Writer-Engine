@@ -192,7 +192,7 @@ for k, v in {
     "story_elements": "",
     "beats_done": {},
     "current_beat": 1,
-    "genre": "느와르",
+    "genre": "범죄/스릴러",
     "fmt": "영화 (장편)",
 }.items():
     if k not in st.session_state:
@@ -476,8 +476,12 @@ st.markdown(
 
 col_g1, col_g2 = st.columns(2)
 with col_g1:
-    genre = st.selectbox("장르", list(GENRE_RULES.keys()),
-                          index=list(GENRE_RULES.keys()).index(st.session_state["genre"]))
+    genre_list = list(GENRE_RULES.keys())
+    current_genre = st.session_state.get("genre", "범죄/스릴러")
+    if current_genre not in genre_list:
+        current_genre = "미지정"
+    genre = st.selectbox("장르", genre_list,
+                          index=genre_list.index(current_genre))
     st.session_state["genre"] = genre
 with col_g2:
     fmt = st.selectbox("포맷", ["영화 (장편)", "시리즈", "단편", "웹드라마"])
