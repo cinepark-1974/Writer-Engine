@@ -298,120 +298,185 @@ S#번호. INT./EXT. 장소 — 시간
 # ═══════════════════════════════════════════════════════════
 
 GENRE_RULES = {
+    "범죄/스릴러": {
+        "en": "Crime / Thriller / Noir",
+        "core": "정보 비대칭과 압박, 도덕적 모호함 속 타락과 생존 대가.",
+        "opening": "사건의 결과부터 — 시체/범죄 현장/파국을 먼저 보여주고 '어떻게?'로 끈다. 또는 냉소적 내레이션으로 끝에서 시작.",
+        "items": [
+            "pressure_escalation", "information_asymmetry", "clock_or_deadline",
+            "threat_visibility_control", "suspicion_transfer", "moral_compromise",
+            "betrayal_architecture", "paranoia_escalation", "dark_irony", "cost_of_survival",
+        ],
+        "must_have": ["초반 10분 내 범죄/사건 발생", "관객이 범인보다 한 발 늦게 알아채는 구조", "미드포인트에서 게임의 룰이 바뀌는 반전", "클라이맥스 직전 2중 반전(double twist)"],
+        "hook_rule": "매 비트 끝에 새로운 의문 또는 위협이 제시되어야 한다.",
+        "punch_rule": "인물의 선택이 돌이킬 수 없는 결과를 만드는 순간.",
+        "setpiece": "추격/대치/심문/잠입 중 최소 2개 setpiece 필수",
+        "forbidden": "설명적 회상 남발, 형사의 독백으로 사건 정리, 우연의 일치로 범인 발각",
+        "hooks": "시계가 돌아간다 / 누군가 지켜보고 있다 / 피할 수 없는 거래 제안",
+        "punches": "단서가 뒤집힌다 / 배신의 순간 / 도덕선을 넘는 선택",
+        "fails": ["압박 약함", "선악 명확", "분위기만 있고 서사 압력 없음", "반전 억지"],
+    },
     "드라마": {
         "en": "Drama",
         "core": "인간의 선택과 대가를 통해 진실에 도달하는 장르.",
-        "opening": "고요한 균열 — 평범한 일상인데 뭔가 하나가 어긋나 있다. 관객이 '왜?'라고 묻게 만들어라.",
+        "opening": "고요한 균열 — 평범한 일상인데 뭔가 하나가 어긋나 있다.",
         "items": [
             "emotional_truth", "character_depth", "moral_complexity",
             "relationship_dynamics", "vulnerability_escalation", "quiet_power",
             "dialogue_weight", "consequence_chain", "identity_pressure", "catharsis_build",
         ],
+        "must_have": ["주인공의 내면 결핍이 외부 사건과 충돌하는 1막 설정", "관계의 균열이 극대화되는 미드포인트", "진짜 감정이 터지는 고백/대결 씬", "변화가 행동으로 증명되는 결말"],
+        "hook_rule": "감정적 긴장의 실을 끊지 않는다. 매 비트 끝에 해결되지 않은 감정적 질문.",
+        "punch_rule": "punch는 폭발이 아니라 침묵. 말하지 못하는 것, 또는 마침내 말해버리는 것.",
+        "setpiece": "감정적 클라이맥스 씬 1개 + 관계 전환 씬 1개 필수",
+        "forbidden": "감정을 직접 설명하는 내레이션, '나는 슬펐다' 류의 감정 나열, 갈등 없는 화해",
         "hooks": "조용한 첫 이미지가 뒤집힐 것을 암시 / 인물의 일상 속 균열",
         "punches": "선택의 대가가 눈에 보이는 순간 / 관계가 돌이킬 수 없이 변하는 순간",
         "fails": ["감정이 표면적", "인물이 평면적", "관계 변화 없음", "대가 부재"],
     },
-    "느와르": {
-        "en": "Noir / Crime Noir",
-        "core": "도덕적 모호함 속 타락과 생존 대가를 보여주는 장르.",
-        "opening": "끝에서 시작 — 주인공의 파국 직전/직후 또는 냉소적 내레이션으로 시작. 관객은 '어떻게 여기까지 왔나'를 궁금해한다.",
-        "items": [
-            "moral_ambiguity", "fatalistic_inevitability", "power_corruption",
-            "betrayal_architecture", "paranoia_escalation", "dark_irony",
-            "visual_shadow_contrast", "voice_cynicism", "loyalty_test", "cost_of_survival",
-        ],
-        "hooks": "어둠 속 이미지, 내레이션의 냉소적 한 줄, 피할 수 없는 거래 제안",
-        "punches": "배신의 순간 / 도덕선을 넘는 선택 / 아이러니한 대가",
-        "fails": ["선악 명확", "배신 무게 부족", "분위기만 있고 서사 압력 없음", "타락 비납득"],
-    },
-    "스릴러": {
-        "en": "Thriller / Crime",
-        "core": "정보 비대칭과 압박 설계로 관객 불안을 지속시키는 장르.",
-        "opening": "사건의 결과부터 — 시체, 범죄 현장, 또는 사건의 여파를 먼저 보여주고 '어떻게?'로 끈다. 또는 평범한 일상이 갑자기 위협에 노출되는 순간.",
-        "items": [
-            "pressure_escalation", "information_asymmetry", "clock_or_deadline",
-            "threat_visibility_control", "suspicion_transfer", "moral_compromise",
-            "false_safety", "reversal_pressure", "investigation_momentum", "dread_carry_over",
-        ],
-        "hooks": "시계가 돌아간다 / 누군가 지켜보고 있다 / 안전한 곳이 위험해진다",
-        "punches": "단서가 뒤집힌다 / 믿었던 인물이 의심 대상이 된다 / 시간이 줄어든다",
-        "fails": ["압박 약함", "단서 평면적", "반전 억지", "인물이 너무 쉽게 말함"],
-    },
-    "코미디": {
-        "en": "Comedy",
-        "core": "웃음 메커니즘이 작동하는 장르. 떠드는 장르가 아니다.",
-        "opening": "결함 폭발 — 주인공의 결함이 3분 안에 사고를 친다. 관객이 이 캐릭터의 문제가 뭔지 즉시 안다.",
-        "items": [
-            "premise_engine", "comic_contradiction", "character_comic_flaw",
-            "comic_escalation", "line_surprise", "status_comedy",
-            "timing_precision", "callback_payoff", "scene_comic_engine", "joke_density",
-        ],
-        "hooks": "일상적 상황의 비틀림 / 캐릭터 결함이 즉시 드러나는 행동",
-        "punches": "callback이 터진다 / 상황이 더 꼬인다 / 역전된 status",
-        "fails": ["설정 안 웃김", "캐릭터 결함이 웃음 비생산", "대사 길고 뻔함", "농담이 서사 정지"],
-    },
-    "멜로/로맨스": {
-        "en": "Melodrama / Romance",
-        "core": "갈망의 축적과 감정의 지연이 만드는 아픔과 회수의 장르.",
-        "opening": "운명적 접점 또는 이별 직후 — 두 사람이 스쳐가거나, 이미 끝난 관계에서 시작한다. 관객은 '이 둘은 어떻게 되는가'를 궁금해한다.",
-        "items": [
-            "desire_tension", "emotional_withholding", "longing_build",
-            "vulnerability_reveal", "timing_misalignment", "intimacy_progression",
-            "symbolic_motif", "ache_after_contact", "impossible_choice", "emotional_payoff",
-        ],
-        "hooks": "시선이 머무른다 / 닿을 듯 닿지 않는 거리 / 우연의 접근",
-        "punches": "감정을 참는 순간 / 타이밍이 어긋나는 순간 / 작은 접촉의 전율",
-        "fails": ["고백만 많고 축적 없음", "끌림 이유 불명", "감정 온도 단조"],
-    },
-    "호러": {
-        "en": "Horror",
-        "core": "공포의 예감과 축적으로 안전감을 체계적으로 파괴하는 장르.",
-        "opening": "프롤로그 킬 — 본편 시작 전에 누군가 죽거나 사라진다. 위협의 규칙을 관객에게 먼저 보여준다. 또는 평범한 공간에서 '뭔가 이상하다'는 감각.",
-        "items": [
-            "fear_anticipation", "uncertainty", "sensory_unease",
-            "threat_design", "dread_pacing", "violation_of_safety",
-            "image_residue", "vulnerability", "false_relief", "terror_escalation",
-        ],
-        "hooks": "평범한 것이 이상하다 / 감각이 경고한다 / 보이지 않는 것의 존재감",
-        "punches": "안전한 곳이 무너진다 / 보이지 않던 것이 보인다 / 가짜 안도 후 진짜 공포",
-        "fails": ["놀람만 있고 공포 축적 없음", "위협 규칙 모호", "불안이 장면 밖으로 안 이어짐"],
-    },
     "액션": {
         "en": "Action",
         "core": "물리적 목표와 대가 속에서 캐릭터 의지를 증명하는 장르.",
-        "opening": "미션 진행 중 — 설명 없이 체이스, 전투, 또는 작전 한복판에서 시작. 관객은 따라잡으며 몰입한다.",
+        "opening": "미션 진행 중 — 설명 없이 체이스, 전투, 작전 한복판에서 시작.",
         "items": [
             "physical_objective_clarity", "spatial_clarity", "tactical_reversal",
             "rising_physical_cost", "kinetic_identity", "consequence_visibility",
             "unique_setpiece_logic", "emotional_stake_inside_action", "momentum", "aftermath_value",
         ],
+        "must_have": ["1막에 주인공의 전투 능력을 보여주는 오프닝 액션", "2막마다 스케일이 커지는 액션 시퀀스", "미드포인트에서 패배 또는 배신", "클라이맥스에서 가장 큰 스케일의 최종 대결"],
+        "hook_rule": "물리적 위협과 시간 압박이 매 비트를 관통한다.",
+        "punch_rule": "예상을 깨는 전술 변화 또는 환경 변화. 같은 패턴 반복 금지.",
+        "setpiece": "최소 3개 대형 setpiece (오프닝/미드포인트/클라이맥스) + 소규모 3개 이상",
+        "forbidden": "설명으로 처리하는 액션, 무의미한 총격전 반복, 빌런의 동기 없는 폭력",
         "hooks": "목표가 명확하다 / 공간이 보인다 / 시간이 없다",
         "punches": "전술이 뒤집힌다 / 대가가 몸에 새겨진다 / 다음 전투가 더 크다",
         "fails": ["목표 흐림", "공간 안 보임", "액션 후 대가 없음"],
     },
-    "SF/판타지": {
-        "en": "Science Fiction / Fantasy",
+    "로맨스": {
+        "en": "Romance / Melodrama",
+        "core": "갈망의 축적과 감정의 지연이 만드는 아픔과 회수의 장르.",
+        "opening": "운명적 접점 또는 이별 직후 — 두 사람이 스쳐가거나, 이미 끝난 관계에서 시작.",
+        "items": [
+            "desire_tension", "emotional_withholding", "longing_build",
+            "vulnerability_reveal", "timing_misalignment", "intimacy_progression",
+            "symbolic_motif", "ache_after_contact", "impossible_choice", "emotional_payoff",
+        ],
+        "must_have": ["첫 만남의 설렘 또는 마찰이 있는 도입", "감정 접근 후 오해/장벽으로 멀어지는 미드포인트", "진심 고백 또는 희생의 클라이맥스", "관계의 새로운 균형을 보여주는 결말"],
+        "hook_rule": "두 사람 사이의 긴장(끌림+저항)이 매 비트에서 진동해야 한다.",
+        "punch_rule": "감정의 급반전 — 웃기다가 울리거나, 가까워지다가 벽이 생기는 순간.",
+        "setpiece": "첫 만남 씬 + 감정 폭발 씬 + 이별/재회 씬 필수",
+        "forbidden": "삼각관계의 기계적 반복, 오해가 대화 한마디로 해결, 물리적 장벽만으로 갈등 유지",
+        "hooks": "시선이 머무른다 / 닿을 듯 닿지 않는 거리 / 우연의 접근",
+        "punches": "감정을 참는 순간 / 타이밍이 어긋나는 순간 / 작은 접촉의 전율",
+        "fails": ["고백만 많고 축적 없음", "끌림 이유 불명", "감정 온도 단조"],
+    },
+    "코미디": {
+        "en": "Comedy",
+        "core": "웃음 메커니즘이 작동하는 장르. 떠드는 장르가 아니다.",
+        "opening": "결함 폭발 — 주인공의 결함이 3분 안에 사고를 친다.",
+        "items": [
+            "premise_engine", "comic_contradiction", "character_comic_flaw",
+            "comic_escalation", "line_surprise", "status_comedy",
+            "timing_precision", "callback_payoff", "scene_comic_engine", "joke_density",
+        ],
+        "must_have": ["도입 5분 내 코믹 톤 확립", "주인공의 결점이 웃음의 원천", "미드포인트에서 거짓말/오해가 극대화", "클라이맥스에서 모든 거짓말이 동시에 터지는 구조"],
+        "hook_rule": "웃음 후 즉시 다음 상황 예고. '이거 어떻게 빠져나가지?'",
+        "punch_rule": "인물이 관객의 예측과 정반대로 행동하는 순간.",
+        "setpiece": "대형 코믹 셋피스 최소 2개 (오해 폭발 + 진실 폭로)",
+        "forbidden": "상황 설명으로 웃기려는 시도, 같은 개그 반복, 인물 비하로 웃음 유발",
+        "hooks": "일상적 상황의 비틀림 / 캐릭터 결함이 즉시 드러나는 행동",
+        "punches": "callback이 터진다 / 상황이 더 꼬인다 / 역전된 status",
+        "fails": ["설정 안 웃김", "캐릭터 결함이 웃음 비생산", "농담이 서사 정지"],
+    },
+    "호러/공포": {
+        "en": "Horror",
+        "core": "공포의 예감과 축적으로 안전감을 체계적으로 파괴하는 장르.",
+        "opening": "프롤로그 킬 — 본편 시작 전에 누군가 죽거나 사라진다. 또는 평범한 공간에서 '뭔가 이상하다'는 감각.",
+        "items": [
+            "fear_anticipation", "uncertainty", "sensory_unease",
+            "threat_design", "dread_pacing", "violation_of_safety",
+            "image_residue", "vulnerability", "false_relief", "terror_escalation",
+        ],
+        "must_have": ["일상의 균열을 보여주는 불안한 오프닝", "규칙 발견 — 이 공포의 작동 방식", "규칙 위반 — 공포 극대화", "최종 대면 — 공포의 실체와 직접 대결"],
+        "hook_rule": "매 비트 끝에 '안전하다고 생각한 순간' 새로운 위협의 징후.",
+        "punch_rule": "jump scare와 slow burn 반드시 교차 배치.",
+        "setpiece": "공포의 규칙 발견 씬 + 규칙 위반 씬 + 최종 대면 씬 필수",
+        "forbidden": "설명으로 무서움을 전달, 공포 원인의 과잉 설명, 공포와 무관한 로맨스 삽입",
+        "hooks": "평범한 것이 이상하다 / 감각이 경고한다 / 보이지 않는 것의 존재감",
+        "punches": "안전한 곳이 무너진다 / 보이지 않던 것이 보인다 / 가짜 안도 후 진짜 공포",
+        "fails": ["놀람만 있고 공포 축적 없음", "위협 규칙 모호", "불안이 장면 밖으로 안 이어짐"],
+    },
+    "SF": {
+        "en": "Science Fiction",
         "core": "세계의 규칙이 인간 드라마의 은유로 작동하는 장르.",
-        "opening": "세계 규칙 한 장면 — 이 세계가 우리와 다르다는 것을 첫 이미지로 보여준다. 경이감 또는 위화감. 설명이 아니라 이미지로.",
+        "opening": "세계 규칙 한 장면 — 이 세계가 우리와 다르다는 것을 첫 이미지로 보여준다.",
         "items": [
             "world_rule_clarity", "wonder_value", "cost_of_rule",
             "ethical_implication", "rule_consistency", "novelty",
             "human_anchor", "visual_imagination", "mythic_depth", "payoff_of_world_rule",
         ],
+        "must_have": ["세계관의 핵심 규칙을 자연스럽게 보여주는 도입", "규칙이 만드는 딜레마", "미드포인트에서 세계관의 진실이 뒤집히는 반전", "기술/환경의 논리 안에서 해결되는 클라이맥스"],
+        "hook_rule": "세계관의 새로운 측면이 매 비트에서 하나씩 드러나야 한다. 정보 과부하 금지.",
+        "punch_rule": "세계관 규칙의 예상치 못한 적용 — '이 기술이 이렇게도?'",
+        "setpiece": "세계관 소개 씬 + 기술 딜레마 씬 + 세계관 반전 씬 필수",
+        "forbidden": "세계관 설명을 위한 강의식 대사, 현실 과학과의 불필요한 변명, 데우스 엑스 마키나",
         "hooks": "이 세계는 우리와 다르다 — 한 가지가 즉시 보인다 / 경이로운 이미지",
         "punches": "규칙의 대가가 드러난다 / 세계의 비밀이 인간 문제와 연결된다",
         "fails": ["룰 설명만 많음", "인간 드라마 약함", "세계관이 이야기보다 앞섬"],
+    },
+    "판타지": {
+        "en": "Fantasy",
+        "core": "마법의 규칙과 대가가 인간 성장의 은유로 작동하는 장르.",
+        "opening": "평범한 세계에서 판타지 세계로의 전환 — 문턱 넘기의 순간.",
+        "items": [
+            "world_rule_clarity", "wonder_value", "cost_of_rule",
+            "ethical_implication", "rule_consistency", "novelty",
+            "human_anchor", "visual_imagination", "mythic_depth", "payoff_of_world_rule",
+        ],
+        "must_have": ["평범한 세계에서 판타지 세계로의 전환(문턱 넘기)", "마법/능력의 규칙과 대가 설정", "멘토의 퇴장 또는 배신", "최종 대결에서 내면의 성장이 외부 승리로 연결"],
+        "hook_rule": "새로운 세계의 경이로움과 위험이 동시에 제시되어야 한다.",
+        "punch_rule": "마법/능력의 예상치 못한 대가 — 힘을 쓸수록 잃는 것이 커지는 구조.",
+        "setpiece": "세계 진입 씬 + 능력 각성 씬 + 최종 대결 씬 필수",
+        "forbidden": "대가 없는 만능 마법, 예언에 의한 수동적 전개, 악의 동기 없는 빌런",
+        "hooks": "새 세계의 경이로운 첫 이미지 / 규칙 발견의 전율",
+        "punches": "능력의 대가가 드러난다 / 믿었던 세계의 진실이 뒤집힌다",
+        "fails": ["대가 없는 능력", "설명 과잉", "인간 드라마 약함"],
+    },
+    "미지정": {
+        "en": "General",
+        "core": "장르 무관, 보편적 서사 원칙으로 작동하는 이야기.",
+        "opening": "관객의 호기심을 잡는 훅 — 장르 상관없이 첫 3분이 관건.",
+        "items": [
+            "intention_clarity", "obstacle_strength", "character_depth",
+            "conflict_escalation", "emotional_truth", "turn_surprise",
+            "consequence_chain", "thematic_unity", "pacing_control", "satisfying_resolution",
+        ],
+        "must_have": ["명확한 도입 훅", "미드포인트 반전", "클라이맥스 대결/대면", "변화가 증명되는 결말"],
+        "hook_rule": "매 비트 끝에 다음 비트로 끌어당기는 질문 또는 위협.",
+        "punch_rule": "핵심 씬마다 예상을 깨는 순간.",
+        "setpiece": "관객이 기억할 대표 씬 최소 2개",
+        "forbidden": "설명적 전개, 갈등 없는 진행, 우연에 의한 해결",
+        "hooks": "호기심을 잡는 질문 / 예상 못한 첫 이미지",
+        "punches": "예상을 깨는 선택 / 대가가 눈에 보이는 순간",
+        "fails": ["갈등 약함", "전환 없음", "결말 억지"],
     },
 }
 
 
 def _genre_text(genre: str) -> str:
-    """장르 Rule Pack → 프롬프트용 텍스트 (구체적 작동 지시 포함)."""
+    """장르 Rule Pack → 프롬프트용 텍스트 (Creator Engine 동기화)."""
     r = GENRE_RULES.get(genre)
+    if not r:
+        # 부분 매칭 시도 (Creator Engine 장르명과 Writer Engine 장르명 호환)
+        for key in GENRE_RULES:
+            if key in genre or genre in key:
+                r = GENRE_RULES[key]
+                break
     if not r:
         return f"[장르: {genre}] — 범용 장르 규칙 적용."
 
     items_detail = "\n".join(f"  - {item}" for item in r["items"])
+    must_have_detail = "\n".join(f"  - {m}" for m in r.get("must_have", []))
 
     opening = r.get("opening", "")
     opening_line = f"\n오프닝 전략: {opening}\n" if opening else ""
@@ -422,17 +487,23 @@ def _genre_text(genre: str) -> str:
         f"핵심 원칙: {r['core']}\n"
         f"{opening_line}"
         f"\n"
-        f"장르 필수 장치 (10개):\n"
+        f"[장르 필수 구조]\n"
+        f"{must_have_detail}\n"
+        f"\n"
+        f"[장르 필수 장치 (10개)]\n"
         f"{items_detail}\n"
         f"\n"
         f"[장르 작동 규칙]\n"
         f"- 매 씬에서 위 10개 장치 중 최소 2개가 반드시 작동해야 한다.\n"
         f"- 비트 전체에서 10개 중 최소 5개 이상이 등장해야 한다.\n"
-        f"- 장르 장치가 작동하지 않는 씬은 존재 이유가 없다.\n"
-        f"- 장르 쾌감이 관객에게 실제로 전달되는지 자가 점검하라.\n"
+        f"- {r.get('hook_rule', '')}\n"
+        f"- {r.get('punch_rule', '')}\n"
+        f"- 필수 셋피스: {r.get('setpiece', '')}\n"
         f"\n"
         f"Hook (씬 시작): {r['hooks']}\n"
         f"Punch (씬 끝): {r['punches']}\n"
+        f"\n"
+        f"[금지] {r.get('forbidden', '')}\n"
         f"\n"
         f"실패 신호 (이것이 느껴지면 다시 써라):\n"
         f"  {' / '.join(r['fails'])}"
