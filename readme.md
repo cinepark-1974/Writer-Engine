@@ -182,5 +182,4 @@ Creator Engine v1.5  →  Writer Engine v3.0  →  Rewrite Engine v2.0
 
 **BLUE JEANS PICTURES**  
 프로듀서: Mr.MOON (문성주)  
-블로그: [CINEPARK](https://cinepark.blog)  
-GitHub: [cinepark-1974](https://github.com/cinepark-1974)
+블로그: [CINEPARK](https://cinepark.blog)
