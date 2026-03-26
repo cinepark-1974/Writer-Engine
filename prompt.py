@@ -866,6 +866,7 @@ def build_write_beat_prompt(
 
 [트리트먼트 — Beat {beat_number}에 해당하는 내용 참조]
 {treat_block}
+(트리트먼트에 villain_beat 항목이 있으면: 이 비트에서 적대자가 한 행동 + 승/패를 반드시 시나리오에 반영하라.)
 
 {f"[톤 문서]{chr(10)}{tone_block}" if tone_block else ""}
 {prev_block}
