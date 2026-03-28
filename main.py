@@ -298,33 +298,59 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
         return p
 
     def add_scene_heading(text):
-        """씬 헤딩 — 볼드."""
+        """씬 헤딩 — 볼드, 1.5줄 간격."""
+        from docx.shared import Pt as _Pt
         p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(12)
-        p.paragraph_format.space_after = Pt(4)
+        p.paragraph_format.space_before = _Pt(12)
+        p.paragraph_format.space_after = _Pt(4)
+        p.paragraph_format.line_spacing = 1.5
         r = p.add_run(text)
         r.bold = True
         r.font.name = "함초롬바탕"
-        r.font.size = Pt(10)
+        r.font.size = _Pt(10)
+        rpr_elem = r._element.get_or_add_rPr()
+        rf = rpr_elem.find(qn('w:rFonts'))
+        if rf is None:
+            rf = rpr_elem.makeelement(qn('w:rFonts'), {})
+            rpr_elem.append(rf)
+        rf.set(qn('w:eastAsia'), '함초롬바탕')
         return p
 
-    def add_dialogue(char_name, parenthetical, line):
-        """대사 — 캐릭터명 + 탭 + (지시) + 대사."""
+    def add_dialogue(char_name, parenthetical, line, continuation=False):
+        """대사 — 캐릭터명 + 탭탭 + (지시) + 대사. 볼드.
+        continuation=True이면 캐릭터명 생략하고 탭탭으로 이어쓰기."""
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(4)
-        paren = f"({parenthetical})" if parenthetical else ""
-        full = f"{char_name}\t\t{paren}{line}"
+        p.paragraph_format.space_after = Pt(0)
+        paren = f"({parenthetical}) " if parenthetical else ""
+        if continuation:
+            full = f"\t\t{paren}{line}"
+        else:
+            full = f"{char_name}\t\t{paren}{line}"
         r = p.add_run(full)
+        r.bold = True
         r.font.name = "함초롬바탕"
         r.font.size = Pt(10)
+        rpr_elem = r._element.get_or_add_rPr()
+        rf = rpr_elem.find(qn('w:rFonts'))
+        if rf is None:
+            rf = rpr_elem.makeelement(qn('w:rFonts'), {})
+            rpr_elem.append(rf)
+        rf.set(qn('w:eastAsia'), '함초롬바탕')
         return p
 
     def add_action(text):
-        """지문 — 일반 텍스트."""
+        """지문 — 일반 텍스트 (표준)."""
         p = doc.add_paragraph()
         r = p.add_run(text)
         r.font.name = "함초롬바탕"
         r.font.size = Pt(10)
+        rpr_elem = r._element.get_or_add_rPr()
+        rf = rpr_elem.find(qn('w:rFonts'))
+        if rf is None:
+            rf = rpr_elem.makeelement(qn('w:rFonts'), {})
+            rpr_elem.append(rf)
+        rf.set(qn('w:eastAsia'), '함초롬바탕')
         return p
 
     # ── 커버 페이지 ──
@@ -338,7 +364,7 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
     doc.add_paragraph("")
     add_text("기획/제작 | 블루진픽처스", size=Pt(10), align=WD_ALIGN_PARAGRAPH.CENTER,
              color=RGBColor(0x8E, 0x8E, 0x99))
-    add_text(f"Writer Engine v2.2  ·  {len(beats_done)}/15 비트",
+    add_text(f"Writer Engine v3.0  ·  {len(beats_done)}/15 비트",
              size=Pt(9), align=WD_ALIGN_PARAGRAPH.CENTER,
              color=RGBColor(0x8E, 0x8E, 0x99))
     doc.add_page_break()
@@ -392,8 +418,8 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
             # 씬 헤딩
             m = heading_re.match(stripped)
             if m:
-                heading_text = m.group(1) + " " + m.group(2)
-                add_scene_heading(heading_text)
+                # S#번호 포함 전체 텍스트 사용
+                add_scene_heading(stripped)
                 i += 1
                 continue
 
@@ -427,11 +453,11 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
                     dialogue_lines.append(ds)
                     i += 1
 
-                # 대사 출력
+                # 대사 출력 — 첫 줄만 캐릭터명, 나머지는 이어쓰기
                 if dialogue_lines:
-                    for dl in dialogue_lines:
-                        add_dialogue(char_name, parenthetical, dl)
-                        parenthetical = ""  # 첫 줄에만
+                    add_dialogue(char_name, parenthetical, dialogue_lines[0])
+                    for dl in dialogue_lines[1:]:
+                        add_dialogue(char_name, "", dl, continuation=True)
                 else:
                     add_dialogue(char_name, parenthetical, "")
                 continue
