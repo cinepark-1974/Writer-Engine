@@ -320,7 +320,10 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
         """대사 — 캐릭터명 + 탭탭 + (지시) + 대사. 볼드.
         continuation=True이면 캐릭터명 생략하고 탭탭으로 이어쓰기."""
         p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(4)
+        if continuation:
+            p.paragraph_format.space_before = Pt(0)
+        else:
+            p.paragraph_format.space_before = Pt(8)  # 지문→대사 간격
         p.paragraph_format.space_after = Pt(0)
         paren = f"({parenthetical}) " if parenthetical else ""
         if continuation:
@@ -342,6 +345,8 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
     def add_action(text):
         """지문 — 일반 텍스트 (표준)."""
         p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(2)
+        p.paragraph_format.space_after = Pt(2)
         r = p.add_run(text)
         r.font.name = "함초롬바탕"
         r.font.size = Pt(10)
@@ -372,8 +377,19 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
     # ── 본문 파싱 + 변환 ──
     # 씬 헤딩 패턴: S#숫자. INT./EXT. 또는 그냥 INT./EXT.
     heading_re = re.compile(r'^S?#?\d*\.?\s*(INT\.|EXT\.|INT\./EXT\.)\s*(.+)', re.IGNORECASE)
-    # 캐릭터명 패턴: 4칸 들여쓰기 + 짧은 이름 (2~10자)
-    char_re = re.compile(r'^\s{2,}([가-힣a-zA-Z\s]{1,15})\s*$')
+    # 캐릭터명 패턴: 2칸+ 들여쓰기 + 이름 (1~15자) + 선택적 (V.O.) / (O.S.) / (CONT'D)
+    char_re = re.compile(
+        r'^\s{2,}([가-힣a-zA-Z\s]{1,15}?)\s*'
+        r'(?:\((V\.O\.|O\.S\.|CONT\'D|cont\'d|v\.o\.|o\.s\.)\))?\s*$',
+        re.IGNORECASE
+    )
+    # 인라인 대사 패턴: "캐릭터명\t\t(지시)대사" 또는 "캐릭터명 (V.O.)\t\t대사"
+    inline_dialogue_re = re.compile(
+        r'^([가-힣a-zA-Z\s]{1,15}?)\s*'
+        r'(?:\((V\.O\.|O\.S\.|CONT\'D|cont\'d|v\.o\.|o\.s\.)\))?\s*'
+        r'\t{1,}\s*(?:\(([^)]*)\)\s*)?(.+)',
+        re.IGNORECASE
+    )
     # 괄호 지시
     paren_re = re.compile(r'^\s{2,}\((.+?)\)\s*$')
     # 구분선/내부메모 (출력 제외)
@@ -423,10 +439,27 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
                 i += 1
                 continue
 
-            # 캐릭터명 + 대사 감지
+            # 인라인 대사 감지: "캐릭터명\t\t(지시) 대사" 형식 (V.O./O.S. 포함)
+            im = inline_dialogue_re.match(stripped)
+            if im:
+                char_name = im.group(1).strip()
+                vo_marker = im.group(2) or ""  # V.O., O.S. 등
+                inline_paren = im.group(3) or ""  # (부드럽게) 등
+                inline_text = im.group(4).strip()
+                # V.O./O.S.를 캐릭터명에 포함
+                if vo_marker:
+                    char_name = f"{char_name} ({vo_marker})"
+                add_dialogue(char_name, inline_paren, inline_text)
+                i += 1
+                continue
+
+            # 캐릭터명 + 대사 감지 (들여쓰기 형식)
             cm = char_re.match(line)
             if cm:
                 char_name = cm.group(1).strip()
+                vo_marker = cm.group(2) or ""  # V.O., O.S. 등
+                if vo_marker:
+                    char_name = f"{char_name} ({vo_marker})"
                 parenthetical = ""
                 dialogue_lines = []
                 i += 1
@@ -438,17 +471,17 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
                         parenthetical = pm.group(1)
                         i += 1
 
-                # 대사 수집 (들여쓰기 없거나 일반 텍스트)
+                # 대사 수집
                 while i < len(lines):
                     dl = lines[i]
                     ds = dl.strip()
                     if not ds:
                         break
-                    # 다음 씬헤딩이면 멈춤
                     if heading_re.match(ds):
                         break
-                    # 다음 캐릭터명이면 멈춤
                     if char_re.match(dl):
+                        break
+                    if inline_dialogue_re.match(ds):
                         break
                     dialogue_lines.append(ds)
                     i += 1
