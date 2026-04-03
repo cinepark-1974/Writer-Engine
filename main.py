@@ -277,18 +277,67 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
         rpr.append(rfonts)
     rfonts.set(qn('w:eastAsia'), '함초롬바탕')
 
+    # ── 커스텀 Word 스타일 생성 (나중에 Word 스타일 패널에서 일괄 수정 가능) ──
+    from docx.enum.style import WD_STYLE_TYPE
+    from docx.shared import Cm
+
+    def _set_eastasia_font(style_or_run_element, font_name='함초롬바탕'):
+        """rPr에 eastAsia 폰트 설정."""
+        rpr_elem = style_or_run_element
+        rf = rpr_elem.find(qn('w:rFonts'))
+        if rf is None:
+            rf = rpr_elem.makeelement(qn('w:rFonts'), {})
+            rpr_elem.append(rf)
+        rf.set(qn('w:eastAsia'), font_name)
+
+    # [스타일 1] 씬번호 — Bold, 위 24pt / 아래 6pt, 1.5줄 간격
+    style_scene = doc.styles.add_style('씬번호', WD_STYLE_TYPE.PARAGRAPH)
+    style_scene.base_style = doc.styles['Normal']
+    style_scene.font.name = '함초롬바탕'
+    style_scene.font.size = Pt(11)
+    style_scene.font.bold = True
+    style_scene.paragraph_format.space_before = Pt(24)
+    style_scene.paragraph_format.space_after = Pt(6)
+    style_scene.paragraph_format.line_spacing = 1.5
+    _set_eastasia_font(style_scene.element.get_or_add_rPr())
+
+    # [스타일 2] 대사 — Bold, 왼쪽 들여쓰기 1.25cm, 위 8pt / 아래 2pt
+    style_dialogue = doc.styles.add_style('대사', WD_STYLE_TYPE.PARAGRAPH)
+    style_dialogue.base_style = doc.styles['Normal']
+    style_dialogue.font.name = '함초롬바탕'
+    style_dialogue.font.size = Pt(10)
+    style_dialogue.font.bold = True
+    style_dialogue.paragraph_format.left_indent = Cm(1.25)
+    style_dialogue.paragraph_format.space_before = Pt(8)
+    style_dialogue.paragraph_format.space_after = Pt(2)
+    style_dialogue.paragraph_format.line_spacing = 1.5
+    _set_eastasia_font(style_dialogue.element.get_or_add_rPr())
+
+    # [스타일 3] 대사연속 — 대사 이어쓰기 (캐릭터명 없이)
+    style_dialogue_cont = doc.styles.add_style('대사연속', WD_STYLE_TYPE.PARAGRAPH)
+    style_dialogue_cont.base_style = style_dialogue
+    style_dialogue_cont.paragraph_format.space_before = Pt(0)
+    style_dialogue_cont.paragraph_format.space_after = Pt(0)
+
+    # [스타일 4] 지문 — 일반 텍스트, 들여쓰기 없음
+    style_action = doc.styles.add_style('지문', WD_STYLE_TYPE.PARAGRAPH)
+    style_action.base_style = doc.styles['Normal']
+    style_action.font.name = '함초롬바탕'
+    style_action.font.size = Pt(10)
+    style_action.font.bold = False
+    style_action.paragraph_format.space_before = Pt(2)
+    style_action.paragraph_format.space_after = Pt(2)
+    _set_eastasia_font(style_action.element.get_or_add_rPr())
+
+    # ── 헬퍼 함수 (스타일 기반) ──
     def add_text(text, bold=False, size=None, color=None, align=None):
+        """커버 페이지용 범용 텍스트."""
         p = doc.add_paragraph()
         if align:
             p.alignment = align
         r = p.add_run(text)
         r.font.name = "함초롬바탕"
-        rpr_elem = r._element.get_or_add_rPr()
-        rf = rpr_elem.find(qn('w:rFonts'))
-        if rf is None:
-            rf = rpr_elem.makeelement(qn('w:rFonts'), {})
-            rpr_elem.append(rf)
-        rf.set(qn('w:eastAsia'), '함초롬바탕')
+        _set_eastasia_font(r._element.get_or_add_rPr())
         if bold:
             r.bold = True
         if size:
@@ -298,64 +347,35 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
         return p
 
     def add_scene_heading(text):
-        """씬 헤딩 — 볼드, 1.5줄 간격."""
-        from docx.shared import Pt as _Pt
-        p = doc.add_paragraph()
-        p.paragraph_format.space_before = _Pt(12)
-        p.paragraph_format.space_after = _Pt(4)
-        p.paragraph_format.line_spacing = 1.5
+        """씬 헤딩 — '씬번호' 스타일 적용."""
+        p = doc.add_paragraph(style='씬번호')
         r = p.add_run(text)
-        r.bold = True
         r.font.name = "함초롬바탕"
-        r.font.size = _Pt(10)
-        rpr_elem = r._element.get_or_add_rPr()
-        rf = rpr_elem.find(qn('w:rFonts'))
-        if rf is None:
-            rf = rpr_elem.makeelement(qn('w:rFonts'), {})
-            rpr_elem.append(rf)
-        rf.set(qn('w:eastAsia'), '함초롬바탕')
+        _set_eastasia_font(r._element.get_or_add_rPr())
         return p
 
     def add_dialogue(char_name, parenthetical, line, continuation=False):
-        """대사 — 캐릭터명 + 탭탭 + (지시) + 대사. 볼드.
-        continuation=True이면 캐릭터명 생략하고 탭탭으로 이어쓰기."""
-        p = doc.add_paragraph()
+        """대사 — '대사'/'대사연속' 스타일 적용.
+        continuation=True이면 캐릭터명 생략."""
         if continuation:
-            p.paragraph_format.space_before = Pt(0)
-        else:
-            p.paragraph_format.space_before = Pt(8)  # 지문→대사 간격
-        p.paragraph_format.space_after = Pt(0)
-        paren = f"({parenthetical}) " if parenthetical else ""
-        if continuation:
+            p = doc.add_paragraph(style='대사연속')
+            paren = f"({parenthetical}) " if parenthetical else ""
             full = f"\t\t{paren}{line}"
         else:
+            p = doc.add_paragraph(style='대사')
+            paren = f"({parenthetical}) " if parenthetical else ""
             full = f"{char_name}\t\t{paren}{line}"
         r = p.add_run(full)
-        r.bold = True
         r.font.name = "함초롬바탕"
-        r.font.size = Pt(10)
-        rpr_elem = r._element.get_or_add_rPr()
-        rf = rpr_elem.find(qn('w:rFonts'))
-        if rf is None:
-            rf = rpr_elem.makeelement(qn('w:rFonts'), {})
-            rpr_elem.append(rf)
-        rf.set(qn('w:eastAsia'), '함초롬바탕')
+        _set_eastasia_font(r._element.get_or_add_rPr())
         return p
 
     def add_action(text):
-        """지문 — 일반 텍스트 (표준)."""
-        p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(2)
-        p.paragraph_format.space_after = Pt(2)
+        """지문 — '지문' 스타일 적용."""
+        p = doc.add_paragraph(style='지문')
         r = p.add_run(text)
         r.font.name = "함초롬바탕"
-        r.font.size = Pt(10)
-        rpr_elem = r._element.get_or_add_rPr()
-        rf = rpr_elem.find(qn('w:rFonts'))
-        if rf is None:
-            rf = rpr_elem.makeelement(qn('w:rFonts'), {})
-            rpr_elem.append(rf)
-        rf.set(qn('w:eastAsia'), '함초롬바탕')
+        _set_eastasia_font(r._element.get_or_add_rPr())
         return p
 
     # ── 커버 페이지 ──
