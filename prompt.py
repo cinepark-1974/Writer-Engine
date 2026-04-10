@@ -997,6 +997,36 @@ def build_write_beat_prompt(
 - 주인공의 일상을 길게 보여주지 마라. 일상 속 균열을 보여줘라.
 """
 
+    # Beat 1~5 = 장르 대기 (Genre Atmosphere) — 초반이 지루해지는 것을 방지
+    atmosphere_block = ""
+    if beat_number <= 5:
+        genre_data = GENRE_RULES.get(genre, {})
+        genre_en = genre_data.get("en", genre)
+        hooks = genre_data.get("hooks", "")
+        atmosphere_block = f"""
+[🌡️ 장르 대기(Genre Atmosphere) — Beat 1~5 초반 지루함 방지]
+사건이 본격적으로 시작되기 전(Beat 1~5)이라도 장르의 분위기는 첫 줄부터 작동해야 한다.
+"일상을 보여주는 씬"과 "장르 분위기가 깔린 일상 씬"은 완전히 다른 것이다.
+
+장르 ({genre_en}) 초반 분위기 규칙:
+- 모든 지문에 장르의 감각이 묻어 있어야 한다. "평범하게 보이지만 뭔가 이상한" 디테일.
+- 씬 시작의 Hook: {hooks}
+- 인물의 행동, 공간의 묘사, 소리와 빛 — 모두 장르의 톤이어야 한다.
+
+❌ 장르 대기 없는 초반 (지루한 이유):
+  "지훈이 부엌에서 라면을 끓인다. 물이 끓는다. 라면을 넣는다."
+  → 이건 호러가 아니라 일상 브이로그다.
+
+✅ 장르 대기 있는 초반:
+  "지훈이 부엌에서 라면을 끓인다. 냄비 뚜껑에 수증기. 창문에 물방울이 맺힌다.
+   싱크대 배수구에서 꺼억 소리. 지훈이 고개를 돌린다. 멈춘다. 아무것도 없다."
+  → 같은 라면 씬인데 관객은 불안하다. 이것이 장르 대기다.
+
+★ Beat 1~5의 모든 씬에서 자가 점검:
+  "이 씬에서 장르를 제거하면 다른 장르 영화에 넣어도 되는가?"
+  → Yes면 장르 대기가 없는 것이다. 장르의 감각을 씬 곳곳에 심어라.
+"""
+
     return f"""
 [TASK] Beat {beat_number} 시나리오 집필 — {beat_info.get('name', '')} ({beat_info.get('act', '')})
 {beat_info.get('desc', '')}
@@ -1007,6 +1037,7 @@ def build_write_beat_prompt(
 {gr}
 [로그라인] {logline or '(씬 플랜 참조)'}
 {opening_block}
+{atmosphere_block}
 [씬 플랜 — 이 비트의 씬을 찾아 정확히 따르라]
 {scene_plan}
 
