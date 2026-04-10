@@ -825,6 +825,21 @@ def build_extract_elements_prompt(
 - (톤 문서의 writer_instruction에서 추출한 절대 규칙들)
 - ...
 
+===Planting & Payoff (심기와 회수)===
+1막에 심은 것이 3막에서 새로운 의미로 회수되어야 한다.
+기획 자료(Core Build/Scene Design/Treatment)에서 설계된 Plant-Payoff 쌍을 추출하라.
+없으면 아래 3가지를 직접 설계하라.
+
+- ① 캐릭터 Plant: (주인공의 습관/대사/소품) → 심는 비트: Beat ___ → 회수 비트: Beat ___
+- ② 관계 Plant: (인물 간 사소한 상호작용) → 심는 비트: Beat ___ → 회수 비트: Beat ___
+- ③ 세계관 Plant: (세계의 규칙/장소/사물) → 심는 비트: Beat ___ → 회수 비트: Beat ___
+
+규칙:
+- 좋은 Plant: 관객이 심어진 줄 모른다. Payoff 순간에 비로소 깨닫는다.
+- Plant 없이 등장하는 Payoff는 데우스 엑스 마키나다. 금지.
+- 회수되지 않는 Plant는 관객의 불만족을 만든다.
+(기획 자료의 planting_payoff / plant_payoff_tag / plant_payoff 필드에서 추출)
+
 ===장르 드라이브 설계===
 
 [정보 비대칭 맵]
@@ -961,6 +976,10 @@ def build_write_beat_prompt(
    - 핵심 장소: 씬 플랜의 장소가 핵심 장소 목록에 있으면, 추출된 감정적 의미·규칙을 반영하라.
    - 모티프: 매 씬에서 모티프가 어디에 있는지 확인하라. 없으면 의도적 부재인지 점검.
    - 캐릭터 전술: 이 비트에서 각 캐릭터가 사용하는 전술이 바이블의 전술 목록과 일치하는지 확인.
+   - Planting & Payoff: 핵심 요소의 Plant-Payoff 설계를 확인하라.
+     · 이 비트가 plant(심기) 비트이면: 자연스럽게 심어라. 관객이 눈치채면 안 된다.
+     · 이 비트가 payoff(회수) 비트이면: 심었던 것을 새로운 의미로 회수하라. 관객이 '아!' 하는 순간.
+     · 트리트먼트에 plant_payoff 필드가 있으면 반드시 따르라.
 
 [RULES — 장르 드라이브 (장르적 재미의 핵심)]
 0-1. 이 비트를 집필하기 전에 아래 5개 질문에 먼저 답하라. 답이 씬에 반영되어야 한다.
@@ -1096,6 +1115,7 @@ def build_write_beat_prompt(
 - ⭐ 서사동력: Goal 추구 상태 / Need 인식 상태 / 간극 (벌어지는 중/좁혀지는 중)
 - 작동한 장르 장치 목록 (예: fear_anticipation, dread_pacing, false_relief)
 - 핵심 요소 추적: 이 비트에서 등장한 맥거핀/비밀/핵심장소/모티프 목록
+- Plant/Payoff: 이 비트에서 심은 것(plant) 또는 회수한 것(payoff) — 없으면 "없음"
 - ⭐ 장르 드라이브 5점 체크:
   ① 정보 비대칭: 관객이 아는 것 vs 주인공이 아는 것 (현재 상태)
   ② 에스컬레이션: 직전 비트 대비 위협 ↑/→/↓
