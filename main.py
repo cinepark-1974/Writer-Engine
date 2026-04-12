@@ -521,7 +521,7 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
 
     # ── 푸터 ──
     doc.add_page_break()
-    add_text(f"© 2026 BLUE JEANS PICTURES · Writer Engine v2.2",
+    add_text(f"© 2026 BLUE JEANS PICTURES · Writer Engine v3.0",
              size=Pt(8), align=WD_ALIGN_PARAGRAPH.CENTER,
              color=RGBColor(0x8E, 0x8E, 0x99))
 
@@ -915,4 +915,4 @@ with col_r2:
             del st.session_state[k]
         st.rerun()
 
-st.caption("© 2026 BLUE JEANS PICTURES · Writer Engine v2.2")
+st.caption("© 2026 BLUE JEANS PICTURES · Writer Engine v3.0")
