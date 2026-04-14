@@ -446,6 +446,31 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
                     i += 1
                 continue
 
+            # 내부 메모 블록 감지 — "**내부 메모**" / "내부 메모:" / "내부 메모" 등
+            if "내부 메모" in stripped:
+                i += 1
+                # 내부 메모 블록 전체 스킵 (다음 씬 헤딩이나 빈 줄 2개까지)
+                while i < len(lines):
+                    memo_line = lines[i].strip()
+                    # 다음 씬 헤딩이 나오면 멈춤
+                    if heading_re.match(memo_line):
+                        break
+                    i += 1
+                continue
+
+            # 내부 메모의 개별 줄 감지 (메모 헤더 없이 바로 시작하는 경우)
+            if stripped.startswith("- ⭐") or stripped.startswith("- **비트") or \
+               stripped.startswith("- **작동") or stripped.startswith("- **핵심") or \
+               stripped.startswith("- **Plant") or stripped.startswith("- 비트 요약") or \
+               stripped.startswith("- 작동한 장르") or stripped.startswith("- 핵심 요소") or \
+               stripped.startswith("- Plant/Payoff") or stripped.startswith("- 서브플롯 진행") or \
+               stripped.startswith("- 관객 심리") or stripped.startswith("- 보이스 점검") or \
+               stripped.startswith("① 정보 비대칭") or stripped.startswith("② 에스컬레이션") or \
+               stripped.startswith("③ 적대자") or stripped.startswith("④ 타이머") or \
+               stripped.startswith("⑤ 장르 쾌감"):
+                i += 1
+                continue
+
             # Beat 헤더 스킵 (프롬프트가 넣는 ACT — Beat 헤더)
             if stripped.startswith("═") or "Beat " in stripped and "—" in stripped:
                 i += 1
