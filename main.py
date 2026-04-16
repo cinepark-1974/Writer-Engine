@@ -582,7 +582,13 @@ st.markdown(
 
 col_g1, col_g2 = st.columns(2)
 with col_g1:
-    genre_list = list(GENRE_RULES.keys())
+    # Creator Engine과 동일한 장르 목록 (로맨틱 코미디 포함)
+    # _is_comedy/_is_romance가 "로맨틱 코미디"를 자동 감지해 COMEDY+ROMANCE 둘 다 주입
+    genre_list = [
+        "미지정", "범죄/스릴러", "드라마", "액션", "로맨스", "코미디",
+        "로맨틱 코미디", "호러/공포", "SF", "판타지",
+        "시대극/사극", "느와르", "미스터리", "전쟁", "뮤지컬", "다큐/논픽션"
+    ]
     current_genre = st.session_state.get("genre", "범죄/스릴러")
     if current_genre not in genre_list:
         current_genre = "미지정"
