@@ -531,11 +531,46 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
                     dialogue_lines.append(ds)
                     i += 1
 
-                # 대사 출력 — 첫 줄만 캐릭터명, 나머지는 이어쓰기
+                # 대사 출력 — 한 캐릭터의 연속 대사를 하나로 병합
+                # AI가 한 발화 안에서 줄바꿈을 넣으면 여러 줄로 쪼개지는 문제 해결
                 if dialogue_lines:
-                    add_dialogue(char_name, parenthetical, dialogue_lines[0])
-                    for dl in dialogue_lines[1:]:
-                        add_dialogue(char_name, "", dl, continuation=True)
+                    # 괄호 지시문 (행동 지시)을 감지해서 분리 처리
+                    # 예: "(결제 페이지를 본다)" 같은 줄은 대사와 분리
+                    merged_parts = []  # [(type, text)] — type은 "dialogue" 또는 "action"
+                    current_dialogue = []
+                    for dl in dialogue_lines:
+                        dl_stripped = dl.strip()
+                        # 줄 전체가 괄호로 시작해서 괄호로 끝나면 행동 지시
+                        if (dl_stripped.startswith("(") and dl_stripped.endswith(")")
+                            and len(dl_stripped) > 2):
+                            # 지금까지 모은 대사를 먼저 합치기
+                            if current_dialogue:
+                                merged_parts.append(("dialogue", " ".join(current_dialogue)))
+                                current_dialogue = []
+                            merged_parts.append(("action", dl_stripped))
+                        else:
+                            current_dialogue.append(dl_stripped)
+                    if current_dialogue:
+                        merged_parts.append(("dialogue", " ".join(current_dialogue)))
+
+                    # 출력
+                    first = True
+                    for part_type, part_text in merged_parts:
+                        if part_type == "dialogue":
+                            if first:
+                                add_dialogue(char_name, parenthetical, part_text)
+                                parenthetical = ""
+                                first = False
+                            else:
+                                add_dialogue(char_name, "", part_text, continuation=True)
+                        else:
+                            # 행동 지시는 지문으로 표시 (대사 사이에 끼워 넣기)
+                            add_action(part_text)
+                            # 행동 지시 뒤 대사는 다시 캐릭터명 표시
+                            first = True
+                    # 처음부터 모두 행동 지시만 있던 경우 fallback
+                    if first:
+                        add_dialogue(char_name, parenthetical, "")
                 else:
                     add_dialogue(char_name, parenthetical, "")
                 continue
