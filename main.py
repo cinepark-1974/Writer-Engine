@@ -451,6 +451,120 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
     # 구분선/내부메모 (출력 제외)
     divider_re = re.compile(r'^(═{3,}|─{3,}|---)')
 
+    # ═══════════════════════════════════════════════════════════
+    # 메타데이터 유출 차단 — 강화된 필터 (v3.4)
+    # Writer Engine 프롬프트가 요구하는 "내부 메모" 항목이 본문에 유출되는 버그 차단.
+    # 아래 키워드 중 하나라도 매칭되면 해당 라인은 DOCX 본문에서 제외.
+    # ═══════════════════════════════════════════════════════════
+    META_PREFIX_PATTERNS = [
+        # 장르 장치 메타 (10개 장치 x 9장르)
+        "premise_engine", "comic_contradiction", "character_comic_flaw",
+        "comic_escalation", "line_surprise", "status_comedy",
+        "timing_precision", "callback_payoff", "scene_comic_engine",
+        "joke_density",
+        "fear_anticipation", "uncertainty", "sensory_unease",
+        "threat_design", "dread_pacing", "violation_of_safety",
+        "image_residue", "vulnerability", "false_relief",
+        "terror_escalation",
+        "information_asymmetry", "escalation", "clock_device",
+        "suspense_peak", "plot_twist", "investigator_obstacle",
+        "villain_intelligence", "moral_ambiguity", "red_herring",
+        "irreversible_stakes",
+        "action_spark", "physical_choreography", "setpiece_scale",
+        "hero_signature", "obstacle_escalation", "stakes_personal",
+        "counter_attack", "low_point", "final_confrontation",
+        "kinetic_rhythm",
+        "longing_distance", "touch_hesitation", "romantic_specificity",
+        "emotional_subtext", "miscommunication", "emotional_reversal",
+        "vulnerability_moment", "physical_chemistry", "obstacle_internal",
+        "payoff_emotional",
+        "world_rule", "tech_showcase", "awe_moment", "info_drip",
+        "human_anchor", "rule_consequence", "visual_wonder",
+        "scale_shift", "philosophical_stakes", "discovery_rhythm",
+        "magic_rule", "mythic_echo", "threshold_crossing",
+        "wonder_image", "sacrifice_price", "prophecy_twist",
+        # 비트 메타 공통
+        "writer_notes", "plant_payoff_tag", "plant_payoff",
+        "scene_meta", "quality_check",
+        # 한글 메타 헤더
+        "맥거핀", "캐릭터 비밀", "핵심 장소", "모티프", "모티프:",
+        "Plant:", "Plant/Payoff", "Payoff:", "Payoff :",
+        "서브플롯", "관객 심리", "열린 질문", "Dramatic Irony",
+        "Zeigarnik", "보이스 점검", "보이스점검",
+        "비트 요약", "비트요약", "비트 구조 유형", "액션 아이디어",
+        "서사동력", "작동한 장르", "작동 장르", "핵심 요소",
+        "장르 드라이브", "캐릭터 전술", "캐릭터 아크",
+        "서브플롯 진행", "강회장 B-Story", "B-Story",
+        "민준 서브플롯", "민준 아크",
+        # 장르 드라이브 5점 체크 항목 (① ② ③ ④ ⑤ 뒤에 오는 메타 키워드)
+        "정보 비대칭", "정보비대칭", "에스컬레이션",
+        "적대자", "타이머", "장르 쾌감", "장르쾌감",
+        # 추가 메타 헤더 (v3.4.1 보강)
+        "캐릭터 전술", "캐릭터전술", "Payoff 회수", "Payoff회수",
+        "Plant 유지", "Plant유지", "비밀",
+    ]
+    # 줄의 시작 부분에 대한 매칭 (불릿/기호 뒤 텍스트)
+    META_LINE_RE = re.compile(
+        r'^(?:[\s•·\-*⭐★─═]+\**)*(?:[①②③④⑤⑥⑦⑧⑨⑩]\s*)?'
+        r'(' + '|'.join(re.escape(p) for p in META_PREFIX_PATTERNS) + r')'
+        r'(?:\s|[:\-—.(]|$)',
+        re.IGNORECASE
+    )
+
+    # (Beat N plant → S#NN payoff) / (S#NN → S#NN) / (전체 plant → S#NN payoff) 같은 개발자 표기
+    META_DEV_NOTATION_RE = re.compile(
+        r'\((?:Beat\s*\d+|S#\s*\d+|전체|전반|후반)[^)]*(?:plant|payoff|→|->)[^)]*\)',
+        re.IGNORECASE
+    )
+    # "- 설명(S#NN) — 미공개/미등장/공개/열린 채" 같은 단독 dev 코멘트
+    META_DEV_COMMENT_RE = re.compile(
+        r'^[\s•·\-*]+.*?\(S#\s*\d+(?:[/,]\s*\d+)*\)\s*(?:—|-|–)\s*(?:미공개|미등장|미해결|공개|폭로|열린|유지|부재)',
+        re.IGNORECASE
+    )
+    # "(관객 O, 유진 X) — 미공개/유지" 같은 Dramatic Irony 메타 주석
+    META_IRONY_COMMENT_RE = re.compile(
+        r'\(관객\s*[OX].*?(?:유진|주인공|캐릭터)\s*[OX][^)]*\)\s*(?:—|-|–)\s*(?:미공개|미등장|미해결|공개|유지)',
+    )
+    # "· 캐릭터명:" 또는 "- 캐릭터명:" 으로 시작하는 서브플롯 요약
+    # (본문 대사와 구분: 대사는 "캐릭터\t\t대사", 요약은 불릿+콜론)
+    META_CHARACTER_SUMMARY_RE = re.compile(
+        r'^[\s•·\-*]+\s*([가-힣]+(?:[·∙・]\s*[가-힣]+)*(?:\s*커플)?)\s*:',
+    )
+    # "- 설명 (Beat N plant → S#NN payoff): 내용" — 불릿 + 설명 + 괄호 dev notation + 콜론
+    META_BULLET_DEV_RE = re.compile(
+        r'^[\s•·\-*]+.*?\((?:Beat\s*\d+|S#\s*\d+)[^)]*\)\s*:',
+        re.IGNORECASE
+    )
+
+    def is_meta_line(s: str) -> bool:
+        """메타데이터 라인 여부 판정."""
+        if not s:
+            return False
+        # 1차: 메타 키워드 직접 매칭
+        if META_LINE_RE.match(s):
+            return True
+        # 2차: snake_case 장르 장치명 (· premise_engine ...)
+        m = re.match(r'^[\s•·\-*⭐★─═]+\s*([a-z]+_[a-z_]+)', s)
+        if m:
+            return True
+        # 3차: 개발자 표기 괄호 + 콜론 (- 간판 케이블타이(Beat 1 plant → S#95 payoff):)
+        if META_BULLET_DEV_RE.match(s):
+            return True
+        # 4차: 캐릭터명 + 콜론 서브플롯 요약 (· 오현수·박지영 커플: ...)
+        # 주의: 본문 대사는 "캐릭터\t\t대사"이고 불릿 없음 → 오차단 안 됨
+        if META_CHARACTER_SUMMARY_RE.match(s):
+            return True
+        # 5차: 줄 전체에 개발자 표기가 있으면 메타 (예: "... (Beat 3 plant → S#45 payoff) ...")
+        if META_DEV_NOTATION_RE.search(s):
+            return True
+        # 6차: 개발자 코멘트 라인 (예: "- 진호 도면 메모(S#91) — 미공개.")
+        if META_DEV_COMMENT_RE.match(s):
+            return True
+        # 7차: Dramatic Irony 메타 주석 (예: "- 건물 강회장 소유(관객 O, 유진 X) — 미공개.")
+        if META_IRONY_COMMENT_RE.search(s):
+            return True
+        return False
+
     current_act = ""
     for b_no in sorted(beats_done.keys()):
         b_info = BEATS_15[b_no - 1]
@@ -462,7 +576,44 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
             current_act = b_info["act"]
 
         text = beats_done[b_no]
-        lines = text.split("\n")
+
+        # ═══════════════════════════════════════════════════════════
+        # 대사 형식 붕괴 자동 복구 (v3.4 신규)
+        # 버그: 긴 컨텍스트에서 AI가 대사 포맷 규칙을 잊고
+        #       "캐릭터\n\n대사" 형식으로 출력 (S#89~ 에서 발견됨)
+        # 복구: "캐릭터" 단독 라인 + 빈 라인 + 대사 라인 → "캐릭터\t\t대사"
+        # ═══════════════════════════════════════════════════════════
+        _CHAR_NAMES = {
+            '유진', '진호', '세웅', '다은', '강회장', '민준', '박지영', '오현수',
+            '이진호', '반세웅', '김사장', '비서', '편집자', '기사', '배달 기사',
+            '사장', '민준 엄마', '박씨', '엄마', '아빠', '형', '누나', '아들', '딸',
+        }
+        _broken_lines = text.split("\n")
+        _fixed_lines = []
+        _j = 0
+        while _j < len(_broken_lines):
+            _cur = _broken_lines[_j].strip()
+            # 패턴 A: "캐릭터명" 단독 + 빈줄 + 대사 → "캐릭터\t\t대사"
+            if (_cur in _CHAR_NAMES and
+                _j + 2 < len(_broken_lines) and
+                _broken_lines[_j + 1].strip() == "" and
+                _broken_lines[_j + 2].strip() and
+                not _broken_lines[_j + 2].strip().startswith("S#") and
+                _broken_lines[_j + 2].strip() not in _CHAR_NAMES):
+                _next_content = _broken_lines[_j + 2].strip()
+                # 괄호 지시(예: "(잠깐 생각하고)")가 있으면 다음 줄이 진짜 대사
+                if _next_content.startswith("(") and _next_content.endswith(")") and \
+                   _j + 4 < len(_broken_lines) and _broken_lines[_j + 3].strip() == "" and \
+                   _broken_lines[_j + 4].strip():
+                    _fixed_lines.append(f"{_cur}\t\t{_next_content} {_broken_lines[_j + 4].strip()}")
+                    _j += 5
+                    continue
+                _fixed_lines.append(f"{_cur}\t\t{_next_content}")
+                _j += 3
+                continue
+            _fixed_lines.append(_broken_lines[_j])
+            _j += 1
+        lines = _fixed_lines
 
         i = 0
         while i < len(lines):
@@ -474,36 +625,58 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
                 i += 1
                 continue
 
-            # 구분선/내부메모 스킵
+            # ★ WRITER_NOTES 마커 블록 스킵 (v3.4 신규)
+            # 프롬프트가 "<WRITER_NOTES_BEGIN>...<WRITER_NOTES_END>" 마커로
+            # 메타 블록을 감싸도록 지시. 이 마커 안쪽 전체를 차단.
+            if "<WRITER_NOTES_BEGIN>" in stripped or "WRITER_NOTES_BEGIN" in stripped:
+                i += 1
+                while i < len(lines):
+                    if ("<WRITER_NOTES_END>" in lines[i] or
+                        "WRITER_NOTES_END" in lines[i]):
+                        i += 1
+                        break
+                    i += 1
+                continue
+            # BLOCK 2 헤더 (메타 블록 시작 신호) 감지 — 마커를 잊어도 차단
+            if stripped.startswith("[BLOCK 2:") or stripped.startswith("[BLOCK 2 "):
+                # 파일 끝까지 스킵
+                i = len(lines)
+                continue
+            if stripped == "[BLOCK 1: 시나리오 본문]" or stripped.startswith("[BLOCK 1:"):
+                i += 1
+                continue
+            if stripped.startswith("━━━"):
+                i += 1
+                continue
+
+            # 구분선/내부메모 스킵 (--- 또는 ═══ 이후 블록 전체)
             if divider_re.match(stripped):
                 i += 1
-                # 내부메모 블록 스킵
-                while i < len(lines) and lines[i].strip():
+                # 내부메모 블록 스킵 (다음 씬 헤딩이나 Beat 헤더까지)
+                while i < len(lines):
+                    memo_line = lines[i].strip()
+                    if heading_re.match(memo_line):
+                        break
+                    if "Beat " in memo_line and "—" in memo_line:
+                        break
                     i += 1
                 continue
 
             # 내부 메모 블록 감지 — "**내부 메모**" / "내부 메모:" / "내부 메모" 등
             if "내부 메모" in stripped:
                 i += 1
-                # 내부 메모 블록 전체 스킵 (다음 씬 헤딩이나 빈 줄 2개까지)
+                # 내부 메모 블록 전체 스킵 (다음 씬 헤딩까지)
                 while i < len(lines):
                     memo_line = lines[i].strip()
-                    # 다음 씬 헤딩이 나오면 멈춤
                     if heading_re.match(memo_line):
                         break
                     i += 1
                 continue
 
-            # 내부 메모의 개별 줄 감지 (메모 헤더 없이 바로 시작하는 경우)
-            if stripped.startswith("- ⭐") or stripped.startswith("- **비트") or \
-               stripped.startswith("- **작동") or stripped.startswith("- **핵심") or \
-               stripped.startswith("- **Plant") or stripped.startswith("- 비트 요약") or \
-               stripped.startswith("- 작동한 장르") or stripped.startswith("- 핵심 요소") or \
-               stripped.startswith("- Plant/Payoff") or stripped.startswith("- 서브플롯 진행") or \
-               stripped.startswith("- 관객 심리") or stripped.startswith("- 보이스 점검") or \
-               stripped.startswith("① 정보 비대칭") or stripped.startswith("② 에스컬레이션") or \
-               stripped.startswith("③ 적대자") or stripped.startswith("④ 타이머") or \
-               stripped.startswith("⑤ 장르 쾌감"):
+            # ★ 메타데이터 개별 줄 차단 (v3.4 신규 강화 필터)
+            # 장르 장치 이름, 비트 메타 항목, 한글 메타 헤더 등을
+            # 광범위하게 매칭하여 본문 유출 차단
+            if is_meta_line(stripped):
                 i += 1
                 continue
 
