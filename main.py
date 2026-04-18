@@ -196,6 +196,8 @@ for k, v in {
     "genre": "범죄/스릴러",
     "fmt": "영화 (장편)",
     "fact_based": False,
+    "historical": False,
+    "historical_type": "팩션",
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -240,7 +242,10 @@ def full_plan() -> str:
 def plan_ready() -> bool:
     return all(st.session_state.get(f"plan_{a}", "").strip() for a in ["1막", "2막", "3막"])
 
-def make_docx_bytes(genre: str, beats_done: dict, title: str = "", fact_based: bool = False) -> bytes:
+def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
+                    fact_based: bool = False,
+                    historical: bool = False,
+                    historical_type: str = "") -> bytes:
     """시나리오 DOCX — 한국 표준 시나리오 서식."""
     import re
     from docx import Document as DocxDocument
@@ -395,8 +400,16 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "", fact_based: b
              color=RGBColor(0x8E, 0x8E, 0x99))
     doc.add_page_break()
 
-    # ── 면책 자막 페이지 (실화 배경 기반 작품 한정) ──
-    if fact_based:
+    # ── 면책 자막 페이지 ──
+    # 적용 조건:
+    #   (1) 실화 배경 기반 작품 (fact_based)
+    #   (2) 팩션·퓨전 역사영화 (정통은 실존 사건·인물 중심이라 면책 문구가 맞지 않음)
+    _need_disclaimer = fact_based or (
+        historical and ("팩션" in (historical_type or "") or "퓨전" in (historical_type or "")
+                        or "faction" in (historical_type or "").lower()
+                        or "fusion" in (historical_type or "").lower())
+    )
+    if _need_disclaimer:
         for _ in range(10):
             doc.add_paragraph("")
         add_text("본 작품에 등장하는 인물, 단체, 지명, 상호, 사건은",
@@ -706,6 +719,32 @@ st.session_state["fact_based"] = st.checkbox(
          "실제 지명·시대 사건·공적 직함은 사용 가능합니다."
 )
 
+# ── 역사영화 체크 + 유형 선택 ──
+_hist_col1, _hist_col2 = st.columns([2, 3])
+with _hist_col1:
+    st.session_state["historical"] = st.checkbox(
+        "역사영화 (시대 고증 + 유형별 규칙 적용)",
+        value=st.session_state.get("historical", False),
+        help="체크하면 시대감 구체화·시대 언어 균형·공간 설계 등 역사영화 공통 규칙이 적용되고, "
+             "선택한 유형(정통/팩션/퓨전)에 따라 세부 집필 철학이 분기됩니다."
+    )
+with _hist_col2:
+    if st.session_state.get("historical", False):
+        st.session_state["historical_type"] = st.selectbox(
+            "역사영화 유형",
+            options=["정통역사영화", "팩션역사영화", "퓨전역사영화"],
+            index=["정통역사영화", "팩션역사영화", "퓨전역사영화"].index(
+                st.session_state.get("historical_type", "팩션")
+                if st.session_state.get("historical_type", "팩션") in ["정통역사영화", "팩션역사영화", "퓨전역사영화"]
+                else ("정통역사영화" if "정통" in st.session_state.get("historical_type", "팩션")
+                      else "팩션역사영화" if "팩션" in st.session_state.get("historical_type", "팩션")
+                      else "퓨전역사영화")
+            ),
+            help="정통: 실재 사건·인물 중심, 사료 존중, 감정 과잉 회피 (남한산성·1987)  |  "
+                 "팩션: 실재 시대+가공 드라마, 재미 코드 자유 (왕의 남자·암살·밀정)  |  "
+                 "퓨전: 시대 차용+자유 서사, 장르 재미 우선 (조선명탐정·전우치)"
+        )
+
 # API 상태
 if get_client():
     st.success(f"API 준비 완료 — 집필: {ANTHROPIC_MODEL_WRITE} · 구조: {ANTHROPIC_MODEL_PLAN}")
@@ -742,6 +781,8 @@ if has_material:
         treatment=st.session_state["treatment"],
         tone=st.session_state["tone"],
         fact_based=st.session_state.get("fact_based", False),
+        historical=st.session_state.get("historical", False),
+        historical_type=st.session_state.get("historical_type", "팩션"),
     )
 
     col_p1, col_p2, col_p3 = st.columns(3)
@@ -934,6 +975,8 @@ if plan_ready():
             world=st.session_state["world"],
             story_elements=st.session_state.get("story_elements", ""),
             fact_based=st.session_state.get("fact_based", False),
+            historical=st.session_state.get("historical", False),
+            historical_type=st.session_state.get("historical_type", "팩션"),
         )
         st.markdown(f'<div class="beat-tag">Beat {cur} 집필 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=16000))
@@ -994,7 +1037,9 @@ if st.session_state.get("beats_done"):
         try:
             docx_bytes = make_docx_bytes(genre, st.session_state["beats_done"],
                                          title=st.session_state.get("title", ""),
-                                         fact_based=st.session_state.get("fact_based", False))
+                                         fact_based=st.session_state.get("fact_based", False),
+                                         historical=st.session_state.get("historical", False),
+                                         historical_type=st.session_state.get("historical_type", "팩션"))
             st.download_button(
                 label=f"DOCX 저장 ({done_count}/15)",
                 data=docx_bytes,
