@@ -195,6 +195,7 @@ for k, v in {
     "current_beat": 1,
     "genre": "범죄/스릴러",
     "fmt": "영화 (장편)",
+    "fact_based": False,
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -239,7 +240,7 @@ def full_plan() -> str:
 def plan_ready() -> bool:
     return all(st.session_state.get(f"plan_{a}", "").strip() for a in ["1막", "2막", "3막"])
 
-def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
+def make_docx_bytes(genre: str, beats_done: dict, title: str = "", fact_based: bool = False) -> bytes:
     """시나리오 DOCX — 한국 표준 시나리오 서식."""
     import re
     from docx import Document as DocxDocument
@@ -393,6 +394,28 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "") -> bytes:
              size=Pt(9), align=WD_ALIGN_PARAGRAPH.CENTER,
              color=RGBColor(0x8E, 0x8E, 0x99))
     doc.add_page_break()
+
+    # ── 면책 자막 페이지 (실화 배경 기반 작품 한정) ──
+    if fact_based:
+        for _ in range(10):
+            doc.add_paragraph("")
+        add_text("본 작품에 등장하는 인물, 단체, 지명, 상호, 사건은",
+                 size=Pt(11), align=WD_ALIGN_PARAGRAPH.CENTER)
+        add_text("모두 허구이며, 실존하는 것과 관련이 있더라도",
+                 size=Pt(11), align=WD_ALIGN_PARAGRAPH.CENTER)
+        add_text("극적 구성을 위해 각색되었습니다.",
+                 size=Pt(11), align=WD_ALIGN_PARAGRAPH.CENTER)
+        doc.add_paragraph("")
+        add_text("All characters, organizations, places, and events in this work",
+                 size=Pt(9), align=WD_ALIGN_PARAGRAPH.CENTER,
+                 color=RGBColor(0x8E, 0x8E, 0x99))
+        add_text("are fictional. Any resemblance to actual persons or events is",
+                 size=Pt(9), align=WD_ALIGN_PARAGRAPH.CENTER,
+                 color=RGBColor(0x8E, 0x8E, 0x99))
+        add_text("dramatized for narrative purposes.",
+                 size=Pt(9), align=WD_ALIGN_PARAGRAPH.CENTER,
+                 color=RGBColor(0x8E, 0x8E, 0x99))
+        doc.add_page_break()
 
     # ── 본문 파싱 + 변환 ──
     # 씬 헤딩 패턴: S#숫자. INT./EXT. 또는 그냥 INT./EXT.
@@ -674,6 +697,15 @@ st.session_state["tone"] = st.text_area(
     "톤 문서 (Tone Document)", value=st.session_state["tone"],
     height=80, placeholder="비주얼/페이싱/대사규칙/모티프/사운드/금기/Writer지시")
 
+# ── 실화 배경 기반 작품 체크 ──
+st.session_state["fact_based"] = st.checkbox(
+    "실화 배경 기반 작품 (실명 비사용 + 사실성 확보 규칙 적용)",
+    value=st.session_state.get("fact_based", False),
+    help="체크하면 집필 시 실명·특정 가능 디테일 회피 규칙이 적용되고, "
+         "DOCX에 각색 고지 자막이 자동 삽입됩니다. "
+         "실제 지명·시대 사건·공적 직함은 사용 가능합니다."
+)
+
 # API 상태
 if get_client():
     st.success(f"API 준비 완료 — 집필: {ANTHROPIC_MODEL_WRITE} · 구조: {ANTHROPIC_MODEL_PLAN}")
@@ -709,6 +741,7 @@ if has_material:
         scene_design=st.session_state["scene_design"],
         treatment=st.session_state["treatment"],
         tone=st.session_state["tone"],
+        fact_based=st.session_state.get("fact_based", False),
     )
 
     col_p1, col_p2, col_p3 = st.columns(3)
@@ -900,6 +933,7 @@ if plan_ready():
             logline=st.session_state["logline"],
             world=st.session_state["world"],
             story_elements=st.session_state.get("story_elements", ""),
+            fact_based=st.session_state.get("fact_based", False),
         )
         st.markdown(f'<div class="beat-tag">Beat {cur} 집필 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=16000))
@@ -959,7 +993,8 @@ if st.session_state.get("beats_done"):
     with col_dl2:
         try:
             docx_bytes = make_docx_bytes(genre, st.session_state["beats_done"],
-                                         title=st.session_state.get("title", ""))
+                                         title=st.session_state.get("title", ""),
+                                         fact_based=st.session_state.get("fact_based", False))
             st.download_button(
                 label=f"DOCX 저장 ({done_count}/15)",
                 data=docx_bytes,
