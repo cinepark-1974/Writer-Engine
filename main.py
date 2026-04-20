@@ -185,8 +185,8 @@ details[open] > div { background-color: var(--card) !important; }
 # ─────────────────────────────────────
 # Session State
 # ─────────────────────────────────────
-FIELDS = ["title", "logline", "intent", "gns", "characters", "world",
-          "structure", "scene_design", "treatment", "tone"]
+FIELDS = ["title", "logline", "intent", "gns", "characters", "opening_strategy",
+          "world", "structure", "scene_design", "treatment", "tone"]
 
 for k, v in {
     "plan_1막": "", "plan_2막": "", "plan_3막": "",
@@ -637,6 +637,18 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
                         break
                     i += 1
                 continue
+            # ★ SPACE_DIVERSITY_CHECK 마커 블록 스킵 (v3.5 신규)
+            # 씬 플랜 공간 분산 자가 점검 블록이 시나리오에 유출되는 것 차단
+            if ("<SPACE_DIVERSITY_CHECK>" in stripped or
+                "SPACE_DIVERSITY_CHECK" in stripped):
+                i += 1
+                while i < len(lines):
+                    if ("</SPACE_DIVERSITY_CHECK>" in lines[i] or
+                        "SPACE_DIVERSITY_CHECK" in lines[i] and "</" in lines[i]):
+                        i += 1
+                        break
+                    i += 1
+                continue
             # BLOCK 2 헤더 (메타 블록 시작 신호) 감지 — 마커를 잊어도 차단
             if stripped.startswith("[BLOCK 2:") or stripped.startswith("[BLOCK 2 "):
                 # 파일 끝까지 스킵
@@ -859,6 +871,19 @@ with col_i1:
     st.session_state["gns"] = st.text_area(
         "Goal / Need / Strategy", value=st.session_state["gns"],
         height=100, placeholder="Goal / Need / Strategy")
+    # ★ v3.6 신규: Creator Engine opening_strategy 전용 필드 (세계관 앞)
+    st.session_state["opening_strategy"] = st.text_area(
+        "오프닝 전략 (Creator Engine — OPENING STRATEGY)",
+        value=st.session_state.get("opening_strategy", ""),
+        height=140,
+        placeholder="Creator Engine의 오프닝 전략 6개 필드를 그대로 붙여넣으세요.\n"
+                    "[오프닝 타입] / [오프닝 의도] / [도파민 포인트] / "
+                    "[1막 연결 방식] / [훅 라인/이미지] / [장르 DNA 체크]\n"
+                    "비워두면 장르 일반 가이드로 폴백합니다.",
+        help="Creator Engine Core Build 결과물의 OPENING STRATEGY 섹션을 "
+             "그대로 복사해서 붙여넣으세요. Beat 1 집필 시 이 구체적 전략이 "
+             "장르 일반 가이드보다 우선 적용됩니다."
+    )
     st.session_state["world"] = st.text_area(
         "세계관 (World Build)", value=st.session_state["world"],
         height=100, placeholder="시간 / 공간 / 규칙 / 금기 / 권력구조")
@@ -948,6 +973,7 @@ if has_material:
         intent=st.session_state["intent"],
         gns=st.session_state["gns"],
         characters=st.session_state["characters"],
+        opening_strategy=st.session_state.get("opening_strategy", ""),  # ★ v3.6 신규
         world=st.session_state["world"],
         structure=st.session_state["structure"],
         scene_design=st.session_state["scene_design"],
@@ -1147,6 +1173,7 @@ if plan_ready():
             logline=st.session_state["logline"],
             world=st.session_state["world"],
             story_elements=st.session_state.get("story_elements", ""),
+            opening_strategy=st.session_state.get("opening_strategy", ""),  # ★ v3.6
             fact_based=st.session_state.get("fact_based", False),
             historical=st.session_state.get("historical", False),
             historical_type=st.session_state.get("historical_type", "팩션"),
