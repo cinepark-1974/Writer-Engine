@@ -1,71 +1,130 @@
-# 👖 BLUE JEANS Writer Engine v3.1
+# 👖 BLUE JEANS Writer Engine v3.1.1
 
-> **AI 시나리오 집필 엔진** — Creator Engine v2.3+ 산출물 → 100씬 영화 시나리오 자동 생성
+> **시나리오 집필 엔진** — Creator Engine v2.3.10+ 산출물 → 100씬 영화 시나리오 자동 생성
 > BLUE JEANS PICTURES · [cinepark-1974](https://github.com/cinepark-1974)
 
 ---
 
 ## 한 줄 요약
 
-**19회 클릭으로 100씬 영화 시나리오를 쓰는 엔진.** 장르 드라이브 5점 체크 + BJND 씬 강제 + 창작자 감성 3요소 + 엔딩 동적 분기로 **"장르 맛 + 작가의 서명 + 관객 신체 반응"**을 동시에 갖춘 시나리오를 생산한다.
+**19회 클릭으로 100씬 영화 시나리오를 쓰는 엔진.** 장르 드라이브 5점 + BJND 씬 강제 + 창작자 감성 3요소 + 엔딩 동적 분기 + **서브장르 OVERRIDE 3종 + Profession Pack 재주입**으로 **"장르 맛 + 작가의 서명 + 관객 신체 반응 + 직업 디테일"**을 모두 갖춘 시나리오를 생산한다.
 
 ---
 
-## 흐름
-
-```
-Creator Engine v2.3+ 산출물 (JSON 또는 11칸 텍스트)
-        ↓
-   씬 플랜 (3회)     ← Sonnet
-        ↓
- 핵심 요소 추출 (1회)  ← Sonnet
-        ↓
-  비트별 집필 (15회)   ← Opus
-        ↓
-    TXT / DOCX (4개 Word 스타일)
-```
-
----
-
-## v3.1 주요 변경 (← v3.0)
+## v3.1.1 주요 변경 (← v3.1.0)
 
 | 신규 기능 | 설명 |
 |----------|------|
-| **Creator JSON 자동 로더** | Creator Engine v2.3+ 결과 JSON을 업로드하면 11개 입력칸이 자동으로 채워진다. |
-| **BJND Scene Enforcer** | Creator가 설계한 Strategy/Cost를 매 비트에서 씬 레벨로 강제 집행. 비트 구간별 Cost 단계(암시→균열→실재손상→현실)를 자동 적용. |
-| **Creator Sensibility 3요소** | PHYSICALITY(관객 신체 반응) / SILENCE(의도된 침묵) / PLANT AESTHETICS(씨앗의 미학)를 모든 비트에 주입. |
-| **엔딩 규칙 동적 분기** | Creator의 `ending_payoff_type`을 읽어 엔딩 규칙을 분기. `internal_transformation`이면 "혼자 성장 엔딩" 허용(쿠킹클래스 유형), `external_choice`면 장르별 기존 규칙. |
-| **BJND v1.0 용어 표준** | Loss/Lack → Desire(Goal+Need) → Strategy → Cost 용어로 통일 (Creator와 완전 동기화). |
-| **사이드바 Engine Info** | Creator Engine과 동일한 톤의 버전 카드. 버전 불일치 즉시 감지. |
+| **범죄 서브장르 OVERRIDE 3종** | MOBFILM(조폭·느와르) / DRUGFILM(마약·밀수) / CONMAN(사기·컨맨) 특화 규칙. 범죄/스릴러 기본 규칙 위에 추가로 얹어진다. |
+| **판별 함수 3종 신규** | `_is_mobfilm()` / `_is_drugfilm()` / `_is_conman()` — 장르 이름에서 서브장르 자동 감지. |
+| **`_is_thriller()` 확장** | 느와르·조폭·갱스터·조직폭력 키워드 추가 인식. |
+| **Profession Pack 19카테고리 재주입** | Creator가 Core/Treatment에 녹인 직업 디테일이 비트 집필 후반부에 휘발되는 문제 해결. 비트마다 캐릭터 텍스트를 스캔해 직업 블록(전문용어+공간+금지 사항)을 압축 재주입. |
+| **수사-범죄 거울 매핑 지원** | 한 작품에 수사자+범죄자가 공존하면 양쪽 프로필 자동 주입. |
+
+## v3.1.0 주요 변경 (← v3.0)
+
+| 기능 | 설명 |
+|------|------|
+| **Creator JSON 자동 로더** | Creator Engine v2.3+ 결과 JSON을 업로드하면 11개 입력칸 자동 채워짐. |
+| **BJND Scene Enforcer** | Creator가 설계한 Strategy/Cost를 매 비트에서 씬 레벨로 강제 집행. |
+| **Creator Sensibility 3요소** | PHYSICALITY(신체 반응) / SILENCE(의도된 침묵) / PLANT AESTHETICS(씨앗의 미학) 모든 비트에 주입. |
+| **엔딩 규칙 동적 분기** | Creator의 `ending_payoff_type` 읽어 엔딩 규칙 분기. `internal_transformation`이면 "혼자 성장 엔딩" 허용(쿠킹클래스 유형). |
 
 ---
 
-## v3.0 → v3.1 호환성
+## 완전 하위 호환
 
-- **완전 하위 호환**: 구형 Creator 프로젝트(v1.9/v2.2)나 수동 입력은 그대로 작동. v3.1 신규 3개 필드(`bjnd_data`, `ending_payoff`, `ending_payoff_type`)가 비어 있으면 기존 v3.0 경로로 폴백.
-- **build_write_beat_prompt 시그니처**: 신규 3개 파라미터는 모두 기본값 `""`. 기존 호출 코드 수정 불필요.
+- 구형 Creator 프로젝트(v1.9/v2.2)나 수동 입력은 그대로 작동
+- v3.1 신규 필드가 비어 있으면 v3.0 경로로 폴백
+- `profession_pack.py` 파일이 없어도 Profession 주입 없이 작동 (크래시 없음)
 
 ---
 
-## 비트 집필 전 체크 시스템 (v3.1)
+## 서브장르 OVERRIDE 3종 상세 (v3.1.1)
+
+### MOBFILM OVERRIDE (조폭·느와르)
+- **활성화 조건**: 장르에 `조폭`/`느와르`/`누아르`/`갱스터`/`조직폭력` 포함, 또는 `범죄+조직` 동시 포함
+- **8원칙**: 서열의 엄격성 / 의리의 서사 엔진 / 3단계 배신 패턴 / 복수의 기하학 / 몰락의 필연성 / 합법·비합법 이중성 / 대사의 무게 / 공간의 상징
+- **대표 작품**: 〈신세계〉·〈범죄와의 전쟁〉·〈아수라〉·〈친구〉
+
+### DRUGFILM OVERRIDE (마약·밀수)
+- **활성화 조건**: 장르에 `마약`/`밀수`/`필로폰`/`메스` 포함
+- **8원칙**: 물건의 물성 / 루트의 지리학 / 상선 3층 구조 / 이중첩자 포지션 / 중독자 몰락 / 돈의 이동 / 검거·몰락 리듬 / 감각의 왜곡
+- **대표 작품**: 〈마약왕〉·〈독전〉·〈수리남〉·〈브로커〉
+
+### CONMAN OVERRIDE (사기·컨맨)
+- **활성화 조건**: 장르에 `사기`/`케이퍼`/`보이스피싱`/`주가조작`/`다단계`/`화이트칼라` 포함
+- **8원칙**: 이중 관객 구조 / 3단 반전 구조 / 타겟 심리 4단계 / 팀 구성 7역할 / 설계도 가시화 / 피해자의 윤리 / 엔딩 패턴 4종 / 대사의 양면성
+- **대표 작품**: 〈범죄의 재구성〉·〈마스터〉·〈설계자〉·〈쩐의 전쟁〉
+
+---
+
+## Profession Pack 19 카테고리 (v3.1.1)
+
+비트 집필 시 캐릭터 텍스트를 스캔해 해당 직업 블록을 자동 재주입한다. 각 블록은 **전문용어 + 공간 디테일 + 금지 사항** 3요소로 압축.
+
+| 카테고리 | 커버 |
+|---|---|
+| 법률직 | 검사·판사·변호사·로스쿨생 |
+| 의료직 | 의사·전문의·레지던트·간호사·약사 |
+| 금융기업직 | 애널리스트·펀드매니저·IB·VC·PE |
+| 언론창작직 | 기자·PD·소설가·작가·웹툰작가 |
+| 공직정치 | 국회의원·보좌관·경찰·소방관·외교관 |
+| 요식서비스직 | 셰프·바리스타·소믈리에·쿠킹 강사 |
+| 교육직 | 교사·교수·강사·입시컨설턴트 |
+| 엔터테인먼트 | 아이돌·배우·매니저·연출가 |
+| 기술IT직 | 개발자·엔지니어·PM·UX디자이너·스타트업 |
+| 예술전통 | 국악·무용가·화가·도예가·서예가 |
+| 강력수사 | 형사·강력계·프로파일러·국과수·SWAT |
+| 마약수사 | 마약수사대·검찰 마약부·세관·위장수사 |
+| 지능수사 | 사이버수사·금감원·경제범죄·보이스피싱 수사 |
+| 대공정보 | 국정원·방첩사령부·대테러·안보수사 |
+| 조직폭력 | 조폭·건달·행동대장·사채업·용역깡패 |
+| 마약밀수 | 마약상·밀수꾼·제조책·운반책·상선 |
+| 화이트칼라범죄 | 사기단·주가조작·보이스피싱·다단계·코인사기 |
+| 건설부동산 | 건축가·현장소장·디벨로퍼·중개사 |
+| 농림수산자영업 | 농부·어부·시장상인·자영업·귀농귀촌 |
+
+**수사-범죄 거울 매핑** (자동 적용):
+- 강력수사 ↔ 조직폭력
+- 마약수사 ↔ 마약밀수
+- 지능수사 ↔ 화이트칼라범죄
+
+---
+
+## 파일 구조
 
 ```
-0.   핵심 요소 — 맥거핀/비밀/장소/모티프/전술/Plant·Payoff
-0-1. 장르 드라이브 5점 (정보 비대칭/에스컬레이션/빌런 승패/타이머/장르 쾌감)
-0-2. 액션 아이디어 — 전진/방해/무관
-0-3. BJND 씬 레벨 작동 (★ v3.1)
-     ① Strategy 구체 행동 / ② 비트 구간 Cost 단계 / ③ Strategy 감각 추적
-0-4. 창작자 감성 3요소 (★ v3.1)
-     PHYSICALITY (신체 반응 설계) / SILENCE (의도된 침묵 1회+) / PLANT (1막 은폐 3막 폭발)
-0-5. 비트 구조 변주 [INV/CON/REV/EMO/ACT/SIL]
-1~5. 분량 + 씬 다양성 + 리듬 변주 + 장소 분산
-6~9. 장르 강제 (장치 2개+/씬, 5개+/비트)
-10~17. 집필 규칙 (보이스/서브텍스트/Too Wet 금지/em dash 금지/AI ESCAPE A1~A20)
+writer-engine/
+├── main.py                (1,418줄)   Streamlit + 듀얼 모델 + DOCX 4스타일 + JSON 로더
+├── prompt.py              (4,861줄)   SYSTEM_PROMPT + 9장르 + 서브장르 3종 + v3.1 모듈 + Profession 재주입
+├── profession_pack.py     (2,587줄)   ★ v3.1.1 신규 — 19개 직업 카테고리 상세 블록
+├── requirements.txt
+└── .streamlit/config.toml
 ```
 
 ---
 
-## Beat 15 엔딩 분기 (v3.1 핵심)
+## 설치 & 실행
+
+### 신규 설치
+```bash
+git clone https://github.com/cinepark-1974/writer-engine.git
+cd writer-engine
+pip install streamlit anthropic python-docx
+streamlit run main.py
+```
+
+### v3.1.1 업그레이드 설치 (기존 v3.0/v3.1 레포에서)
+
+1. **덮어쓰기** (3개 파일): `main.py`, `prompt.py`, `README.md`
+2. **신규 파일 추가** (1개 파일): `profession_pack.py` (레포 루트에 배치)
+3. GitHub 푸시 → Streamlit Cloud 자동 재배포
+4. 사이드바에 `v3.1.1 / 2026-04-23` 확인
+
+---
+
+## Beat 15 엔딩 분기 (v3.1부터)
 
 Creator Engine의 `ending_payoff_type` 값에 따라 엔딩 규칙이 자동 분기된다:
 
@@ -77,78 +136,20 @@ Creator Engine의 `ending_payoff_type` 값에 따라 엔딩 규칙이 자동 분
 
 Beat 15~16 규칙:
   ✅ Strategy_2의 확정 씬 (signature_moment) 필수
-  ❌ 외적 선택 단순화 금지 ("A/B 중 한 명을 택한다" 식 엔딩)
+  ❌ 외적 선택 단순화 금지
   ❌ 로맨스 장르라고 기계적으로 '둘이 이어짐' 강제하지 않음
 ```
 
 ### EXTERNAL_CHOICE (외적 선택형)
 ```
-예: 일반 로맨스/스릴러/액션
-  주인공의 명확한 외적 행동으로 엔딩 확정
-  장르 약속(커플 성사/진실 폭로/최종 대결) 준수
+주인공의 명확한 외적 행동으로 엔딩 확정
+장르 약속(커플 성사/진실 폭로/최종 대결) 준수
 ```
 
 ### 미지정 (빈 값)
 ```
-기존 v3.0 장르 기반 엔딩 규칙으로 폴백 (하위 호환)
+기존 v3.0 장르 기반 엔딩 규칙으로 폴백
 ```
-
----
-
-## 파일 구조
-
-```
-writer-engine/
-├── main.py           (1,418줄)  Streamlit + 듀얼 모델 + DOCX 4스타일 + JSON 로더
-├── prompt.py         (4,272줄)  SYSTEM_PROMPT + 9장르 + 빌더 + v3.1 신규 5모듈
-├── requirements.txt
-└── .streamlit/config.toml
-```
-
----
-
-## 설치 & 실행
-
-```bash
-git clone https://github.com/cinepark-1974/writer-engine.git
-cd writer-engine
-pip install streamlit anthropic python-docx
-streamlit run main.py
-```
-
----
-
-## 입력 (11칸 + v3.1 신규 3칸)
-
-| 필드 | Creator Engine JSON 경로 | 비고 |
-|------|-------------------------|------|
-| 제목 | `project.title` | |
-| 로그라인 | `core.logline_pack.washed` | |
-| 기획의도 | `core.project_intent` (v2.3+) | v2.2 이하는 `key_points` |
-| GNS | `core.goal_need_strategy` | Goal·Need·Strategy·Risk·Ending Payoff |
-| 캐릭터 + 바이블 | `char_bible` + `core.characters` | |
-| 오프닝 전략 | `core.opening_strategy` | v3.6 호환 |
-| 세계관 | `core.world_build` | |
-| 구조 | `structure_story` | |
-| 장면 설계 | `scene_design` | |
-| 트리트먼트 | `treatment` | |
-| 톤 문서 | `tone_doc` | |
-| **★ BJND 설계** | `core.narrative_drive` + `core.goal_need_strategy` | ★ v3.1 신규 |
-| **★ Ending Payoff** | `core.goal_need_strategy.ending_payoff` | ★ v3.1 신규 |
-| **★ Ending Type** | `core.goal_need_strategy.ending_type` 또는 자동 추정 | ★ v3.1 신규 |
-
-Creator JSON 업로드 시 14개 항목이 한 번에 자동 채워진다.
-
----
-
-## DOCX — 4개 Word 스타일 (v3.0에서 유지)
-
-| 스타일 | 용도 | Bold | 들여쓰기 | 위 간격 | 줄간격 |
-|--------|------|------|---------|--------|-------|
-| 씬번호 | S#1. INT. 카페 — 낮 | ✅ 11pt | — | 24pt | 1.5 |
-| 대사 | 하은\t\t석태야... | ✅ 10pt | 1.25cm | 8pt | 1.5 |
-| 대사연속 | \t\t우리한테... | ✅ | 1.25cm | 0pt | — |
-| 지문 | 석태의 손이... | ❌ 10pt | — | 2pt | — |
 
 ---
 
@@ -164,10 +165,10 @@ Creator JSON 업로드 시 14개 항목이 한 번에 자동 채워진다.
 ## 엔진 생태계
 
 ```
-Creator Engine v2.3  →  Writer Engine v3.1  →  Rewrite Engine
-                     →  Series Engine
-                     →  Novel Engine
-                     →  Shortform Engine
+Creator Engine v2.3.10  →  Writer Engine v3.1.1  →  Rewrite Engine
+                        →  Series Engine
+                        →  Novel Engine
+                        →  Shortform Engine
 ```
 
 ---
@@ -176,27 +177,18 @@ Creator Engine v2.3  →  Writer Engine v3.1  →  Rewrite Engine
 
 | 버전 | 날짜 | 변경 |
 |------|------|------|
-| v1.0 | 2026-03-17 | 초기. 7모드→2스텝 전환. |
-| v2.0 | 2026-03-21 | Sorkin/Curtis, 관객심리, 서브플롯, DOCX. |
-| v2.2 | 2026-03-21 | 8장르, 오프닝 훅, 분량 강화. |
-| v3.0 | 2026-03-28 | 장르 드라이브 5점 체크, 액션 아이디어, 서사동력, 빌런, Planting & Payoff, 씬 다양성, 기능적 조연, 9장르, 듀얼 모델, DOCX 4스타일, V.O. 인식, em dash 금지, 대사 규칙. CE v1.9 동기화. |
-| **v3.1** | **2026-04-23** | **Creator Engine v2.3 동기화. Creator JSON 자동 로더, BJND Scene Enforcer, 창작자 감성 3요소(Physicality/Silence/Plant), 엔딩 동적 분기(internal_transformation / external_choice), v3.0 쿠킹클래스 엔딩 충돌 규칙 해결, BJND v1.0 용어 표준.** |
+| v3.0 | 2026-03-28 | 장르 드라이브 5점, 빌런 승률, Planting & Payoff, 9장르, 듀얼 모델. CE v1.9 동기화. |
+| v3.1.0 | 2026-04-23 | Creator Engine v2.3 동기화. JSON 자동 로더, BJND Scene Enforcer, 감성 3요소, 엔딩 동적 분기. |
+| **v3.1.1** | **2026-04-23** | **Creator Engine v2.3.10 동기화. 서브장르 OVERRIDE 3종, Profession Pack 19카테고리 재주입, 수사-범죄 거울 매핑.** |
 
 ---
 
-## v3.1의 핵심 변화 요약
+## v3.1.1의 철학
 
-**v3.0 철학**: "장르적으로 재미있고 서사적으로 관통하는 시나리오"
-**v3.1 철학**: "장르적으로 재미있고, 서사적으로 관통하며, **작가의 서명이 남고, 관객의 몸이 반응하는** 시나리오"
-
-세 가지 추가 레이어가 v3.1을 v3.0과 구분한다:
-1. **BJND 씬 강제** — Creator의 설계가 시나리오 끝까지 살아남는다
-2. **감성 3요소** — 관객의 몸이 반응한다 (Physicality / Silence / Plant)
-3. **엔딩 동적 분기** — BJND가 요구하는 엔딩이 장르 관습을 이긴다
-
-이것이 "기획서 9점인데 시나리오 7점" 문제를 구조적으로 해결한다.
+- **v3.0**: 장르적으로 재미있고 서사적으로 관통하는 시나리오
+- **v3.1.0**: v3.0 + 작가의 서명이 남고 관객의 몸이 반응하는 시나리오
+- **v3.1.1**: v3.1.0 + 서브장르 고유 문법이 살아있고 직업 디테일이 휘발되지 않는 시나리오
 
 ---
 
 © 2026 BLUE JEANS PICTURES
-Mr.MOON · [CINEPARK](https://cinepark.blog) · [cinepark-1974](https://github.com/cinepark-1974)
