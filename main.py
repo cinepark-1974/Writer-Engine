@@ -1,4 +1,5 @@
 import os
+import json  # ★ v3.1 — Creator JSON 로드용
 from datetime import datetime
 
 import streamlit as st
@@ -13,6 +14,9 @@ from prompt import (
     build_extract_elements_prompt,
     build_write_beat_prompt,
     build_rewrite_prompt,
+    extract_from_creator_json,  # ★ v3.1 신규
+    ENGINE_VERSION,              # ★ v3.1
+    ENGINE_BUILD_DATE,           # ★ v3.1
 )
 
 ANTHROPIC_MODEL_WRITE = "claude-opus-4-6"      # 집필 (비트 쓰기, 다시 쓰기) — 최고 품질
@@ -27,6 +31,25 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+# ─────────────────────────────────────
+# ★ v3.1 — Sidebar Engine Info (Creator Engine과 동일 톤)
+# ─────────────────────────────────────
+with st.sidebar:
+    st.markdown(f"""
+    <div style="padding:12px;background:#F0F2FF;border-radius:8px;border-left:3px solid #191970;font-family:'Pretendard',sans-serif;">
+        <div style="font-size:.72rem;color:#191970;font-weight:700;letter-spacing:.05em;margin-bottom:4px;">ENGINE INFO</div>
+        <div style="font-size:1.05rem;font-weight:700;color:#191970;">Writer Engine</div>
+        <div style="font-size:1.25rem;font-weight:900;color:#FFCB05;background:#191970;padding:2px 8px;border-radius:4px;display:inline-block;margin-top:4px;">
+            {ENGINE_VERSION}
+        </div>
+        <div style="font-size:.7rem;color:#666;margin-top:8px;">
+            Build: {ENGINE_BUILD_DATE}<br>
+            Creator Engine v2.3+ 호환
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.caption("버전이 최신인지 확인하세요.")
 
 # ─────────────────────────────────────
 # Custom CSS (Creator Engine 동일 톤)
@@ -186,7 +209,8 @@ details[open] > div { background-color: var(--card) !important; }
 # Session State
 # ─────────────────────────────────────
 FIELDS = ["title", "logline", "intent", "gns", "characters", "opening_strategy",
-          "world", "structure", "scene_design", "treatment", "tone"]
+          "world", "structure", "scene_design", "treatment", "tone",
+          "bjnd_data", "ending_payoff", "ending_payoff_type"]  # ★ v3.1 신규 3개
 
 for k, v in {
     "plan_1막": "", "plan_2막": "", "plan_3막": "",
@@ -395,7 +419,7 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
     doc.add_paragraph("")
     add_text("기획/제작 | 블루진픽처스", size=Pt(10), align=WD_ALIGN_PARAGRAPH.CENTER,
              color=RGBColor(0x8E, 0x8E, 0x99))
-    add_text(f"Writer Engine v3.0  ·  {len(beats_done)}/15 비트",
+    add_text(f"Writer Engine {ENGINE_VERSION}  ·  {len(beats_done)}/15 비트",
              size=Pt(9), align=WD_ALIGN_PARAGRAPH.CENTER,
              color=RGBColor(0x8E, 0x8E, 0x99))
     doc.add_page_break()
@@ -802,7 +826,7 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
 
     # ── 푸터 ──
     doc.add_page_break()
-    add_text(f"© 2026 BLUE JEANS PICTURES · Writer Engine v3.0",
+    add_text(f"© 2026 BLUE JEANS PICTURES · Writer Engine {ENGINE_VERSION}",
              size=Pt(8), align=WD_ALIGN_PARAGRAPH.CENTER,
              color=RGBColor(0x8E, 0x8E, 0x99))
 
@@ -835,6 +859,61 @@ st.markdown(
     '<div class="small-meta">Creator Engine 결과를 항목별로 복사해서 붙여넣으세요. 필요한 칸만 채워도 됩니다.</div>',
     unsafe_allow_html=True,
 )
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.1 신규 — Creator Engine JSON 자동 로더
+# ═══════════════════════════════════════════════════════════
+with st.expander("⚡ Creator Engine JSON 업로드 (자동 채우기)", expanded=False):
+    st.markdown(
+        '<div class="small-meta">Creator Engine에서 내려받은 .json 파일을 업로드하면 '
+        '아래 모든 입력칸이 자동으로 채워집니다. BJND·엔딩 페이오프·엔딩 타입도 함께 적용됩니다.</div>',
+        unsafe_allow_html=True,
+    )
+    json_file = st.file_uploader("Creator Engine JSON 파일", type=["json"], key="creator_json_uploader")
+    col_u1, col_u2 = st.columns([1, 2])
+    with col_u1:
+        load_btn = st.button("📂 JSON 적용", use_container_width=True,
+                              disabled=(json_file is None))
+    with col_u2:
+        if json_file is not None:
+            st.caption(f"선택됨: `{json_file.name}`")
+    
+    if load_btn and json_file is not None:
+        try:
+            raw = json_file.read().decode("utf-8")
+            creator_data = json.loads(raw)
+            loaded = extract_from_creator_json(creator_data)
+            
+            # 세션에 주입
+            for k, v in loaded.items():
+                if k in st.session_state or k in FIELDS:
+                    st.session_state[k] = v
+            
+            # 엔진 버전 표시
+            meta = creator_data.get("_meta", {})
+            ce_ver = meta.get("engine_version", "?")
+            stage = meta.get("stage", "?")
+            
+            # 엔딩 타입 판정 결과 알림
+            et = loaded.get("ending_payoff_type", "")
+            if et == "internal_transformation":
+                et_msg = "🧠 내적 전환형 (Strategy 전환 — 쿠킹클래스 유형)"
+            elif et == "external_choice":
+                et_msg = "🎯 외적 선택형 (커플 성사/진실 폭로 등)"
+            else:
+                et_msg = "⚪ 미판정 (기존 v3.0 장르 엔딩 규칙 사용)"
+            
+            st.success(
+                f"✅ Creator Engine {ce_ver} / {stage} 단계 로드 완료.\n\n"
+                f"**프로젝트**: {loaded.get('title', '(무제')})\n"
+                f"**엔딩 판정**: {et_msg}\n"
+                f"**로드된 필드**: 11칸 + v3.1 신규 3칸"
+            )
+            st.rerun()
+        except json.JSONDecodeError as e:
+            st.error(f"JSON 파싱 실패: {e}")
+        except Exception as e:
+            st.error(f"로드 중 오류: {e}")
 
 col_g1, col_g2 = st.columns(2)
 with col_g1:
@@ -907,6 +986,78 @@ st.session_state["treatment"] = st.text_area(
 st.session_state["tone"] = st.text_area(
     "톤 문서 (Tone Document)", value=st.session_state["tone"],
     height=80, placeholder="비주얼/페이싱/대사규칙/모티프/사운드/금기/Writer지시")
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.1 신규 — BJND · Ending Payoff · Ending Type
+# Creator JSON 업로드 시 자동 채워짐. 수동 편집도 가능.
+# ═══════════════════════════════════════════════════════════
+with st.expander("🧬 v3.1 BJND · 엔딩 설계 (Creator Engine v2.3+ 연동)", expanded=False):
+    st.markdown(
+        '<div class="small-meta">Creator Engine JSON을 업로드하면 자동 채워집니다. '
+        '수동 편집도 가능합니다. 이 세 항목이 비어 있으면 기존 v3.0 방식(장르 엔딩 규칙)으로 집필됩니다.</div>',
+        unsafe_allow_html=True,
+    )
+    
+    st.session_state["bjnd_data"] = st.text_area(
+        "BJND 설계 (Loss/Lack · Goal · Need · Strategy · Cost · Ending Payoff)",
+        value=st.session_state.get("bjnd_data", ""),
+        height=150,
+        placeholder=(
+            "[desire_origin] lack\n"
+            "[goal] 독립적 삶 증명\n"
+            "[need] 간보지 않는 친밀함\n"
+            "[strategy] 두 남자를 재료처럼 비교·분석\n"
+            "[cost_1] 관계의 피상성\n"
+            "[ending_payoff] ..."
+        ),
+        help="매 비트에서 Strategy가 행동으로 드러나도록 강제하고, 비트 구간별 Cost 단계를 강제합니다."
+    )
+    
+    col_e1, col_e2 = st.columns([3, 2])
+    with col_e1:
+        st.session_state["ending_payoff"] = st.text_area(
+            "Ending Payoff (엔딩 페이오프 텍스트)",
+            value=st.session_state.get("ending_payoff", ""),
+            height=80,
+            placeholder="예: 유진이 분석을 멈추고 세웅의 이름을 먼저 부르는 순간, Need(친밀함)가 처음으로 채워진다.",
+            help="Beat 15~16에서 이 페이오프가 구체적 행동/이미지로 구현되도록 강제합니다."
+        )
+    with col_e2:
+        et_options = ["(미지정 — 장르 폴백)", "internal_transformation", "external_choice"]
+        et_labels = {
+            "(미지정 — 장르 폴백)": "",
+            "internal_transformation": "internal_transformation",
+            "external_choice": "external_choice",
+        }
+        current_et = st.session_state.get("ending_payoff_type", "")
+        # 역매핑
+        display_et = "(미지정 — 장르 폴백)"
+        for label, val in et_labels.items():
+            if val == current_et and val:
+                display_et = label
+                break
+        
+        chosen = st.selectbox(
+            "엔딩 타입 (Ending Type)",
+            options=et_options,
+            index=et_options.index(display_et) if display_et in et_options else 0,
+            help=(
+                "internal_transformation: 자기 발견·Strategy 전환형 엔딩 "
+                "(쿠킹클래스 유형 — 한 명 선택 강제 해제)\n\n"
+                "external_choice: 명확한 외적 선택·대결·고백형 엔딩\n\n"
+                "미지정: 기존 v3.0 장르 엔딩 규칙 사용"
+            )
+        )
+        st.session_state["ending_payoff_type"] = et_labels[chosen]
+    
+    # 엔딩 판정 결과 실시간 표시
+    et_now = st.session_state.get("ending_payoff_type", "")
+    if et_now == "internal_transformation":
+        st.info("🧠 **내적 전환형 엔딩** — Beat 15~16에서 '한 명 선택' 엔딩 금지, Strategy 전환 씬 강제")
+    elif et_now == "external_choice":
+        st.info("🎯 **외적 선택형 엔딩** — 장르 약속에 따른 명확한 외적 행동 엔딩")
+    else:
+        st.caption("⚪ 미지정 상태 — 기존 v3.0 장르 기반 엔딩 규칙이 Beat 15에 적용됩니다.")
 
 # ── 실화 배경 기반 작품 체크 ──
 st.session_state["fact_based"] = st.checkbox(
@@ -1173,7 +1324,10 @@ if plan_ready():
             logline=st.session_state["logline"],
             world=st.session_state["world"],
             story_elements=st.session_state.get("story_elements", ""),
-            opening_strategy=st.session_state.get("opening_strategy", ""),  # ★ v3.6
+            opening_strategy=st.session_state.get("opening_strategy", ""),  # v3.6
+            bjnd_data=st.session_state.get("bjnd_data", ""),                  # ★ v3.1
+            ending_payoff=st.session_state.get("ending_payoff", ""),          # ★ v3.1
+            ending_payoff_type=st.session_state.get("ending_payoff_type", ""),# ★ v3.1
             fact_based=st.session_state.get("fact_based", False),
             historical=st.session_state.get("historical", False),
             historical_type=st.session_state.get("historical_type", "팩션"),
