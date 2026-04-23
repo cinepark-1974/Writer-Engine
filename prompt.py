@@ -1,8 +1,414 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v2.2
-# prompt.py — Full Version
+# BLUE JEANS SCREENPLAY WRITER ENGINE v3.1
+# prompt.py — Full Version (Creator Engine v2.3 동기화)
 # © 2026 BLUE JEANS PICTURES
+#
+# v3.1.0 주요 변경사항 (2026-04-23):
+# - BJND SCENE ENFORCER 신규 (Creator Strategy/Cost 씬 레벨 강제)
+# - CREATOR SENSIBILITY 신규 (Physicality/Silence/Plant Aesthetics)
+# - Ending 규칙 동적 분기 (ending_payoff_type 기반)
+# - Creator JSON 자동 로더 (extract_from_creator_json)
+# - build_write_beat_prompt 시그니처 확장 (하위 호환 유지)
 # ─────────────────────────────────────────────────────────────
+
+ENGINE_VERSION = "v3.1.0"
+ENGINE_BUILD_DATE = "2026-04-23"
+
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.1 NEW MODULE 1 — BJND SCENE ENFORCER
+# Creator Engine이 설계한 Strategy/Cost를 매 비트에서 강제 집행
+# ═══════════════════════════════════════════════════════════
+
+WRITER_BJND_SCENE_ENFORCER = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+★★★ BJND 씬 레벨 강제 집행 — v3.1 핵심 ★★★
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+★ Creator Engine이 설계한 Strategy와 Cost는 참고 자료가 아니다. 집필 명령이다. ★
+★ 이 비트의 모든 씬에서 Strategy가 '구체적 행동'으로 드러나야 한다. ★
+★ Cost가 이 비트 구간의 단계에 맞게 쌓여야 한다. ★
+
+[1. Strategy 씬 레벨 작동 — 매 씬 자가 점검]
+
+주인공의 Strategy(해결전략)가 이 비트의 씬에서 어떤 구체적 '행동'으로 드러나는가?
+
+  ❌ 약한 예: "유진이 남자들을 관찰한다" (추상)
+  ✅ 강한 예: "유진이 진호의 손가락 마디를 본다. 저 손은 차가운 재료를 만지는 손이다.
+             식자재 납품업자의 손. 새우를 떼어내는 속도로 사람을 떼어낼 수 있는 손."
+             (Strategy='사람을 재료처럼 분류'가 구체적 관찰 행동으로 실행됨)
+
+이 비트의 씬마다 최소 1개는 Strategy가 행동으로 작동해야 한다.
+없으면 그 씬은 BJND에서 유리된 씬이다.
+
+[2. Cost 누적 단계 — 비트 구간에 맞는 단계인가]
+
+Beat 번호에 따라 Cost가 작동하는 방식이 다르다:
+
+  ■ Beats 1~4 (1막): Cost '암시' 단계
+    - 주인공 주변 사람이 Strategy의 문제를 감지 (주인공은 자각 못 함)
+    - 관객은 '뭔가 이상하다'를 느끼기 시작
+    - 지문·주변 인물의 한 줄 대사로 흘리기
+  
+  ■ Beats 5~8 (2막 전반): Cost '작은 균열' 단계
+    - 관계의 미세한 어긋남이 구체적으로 드러남
+    - 주인공이 당황하지만 Strategy를 더 고집함
+  
+  ■ Beats 9~11 (2막 후반): Cost '실재 손상' 단계
+    - 누군가 실제로 다치거나 잃음 (관계/기회/존재감)
+    - 주인공이 Strategy를 더 강하게 밀어붙임 (역설 — 여기가 핵심)
+  
+  ■ Beats 12~16 (3막): Cost '부정할 수 없는 현실' 단계
+    - 주인공이 자기 Strategy가 만든 파괴를 직면
+    - Strategy_1의 완전한 붕괴 (Beat 12~13)
+    - Strategy_2의 첫 시도 — 서툴게, 주저하며 (Beat 14)
+    - Strategy_2의 확정 — signature_moment (Beat 15~16)
+
+★ 이 비트가 속한 구간의 Cost 단계를 정확히 구현하라. ★
+★ 단계를 건너뛰거나 거꾸로 가면 관객은 변화를 믿지 않는다. ★
+
+[3. 비트 끝 Strategy 감각 — 주인공 내면 상태 추적]
+
+이 비트가 끝날 때 주인공은 자기 Strategy에 대해 어떤 감각을 갖는가?
+  (자신감 / 균열 / 의심 / 붕괴 / 전환)
+
+이것이 내부 메모(Writer Notes)의 'Strategy 감각' 항목에 기록되어야 한다.
+비트가 진행될수록 '자신감 → 균열 → 의심 → 붕괴 → 전환' 방향으로 이동해야 한다.
+""".strip()
+
+
+def get_bjnd_scene_enforcer(beat_number: int) -> str:
+    """BJND 씬 강제 모듈 반환. beat_number에 따라 적용 Cost 단계를 강조."""
+    stage_hint = ""
+    if 1 <= beat_number <= 4:
+        stage_hint = "\n[★ 현재 비트는 1막 구간 — Cost는 '암시'로만. 아직 본인은 자각하지 않는다.]"
+    elif 5 <= beat_number <= 8:
+        stage_hint = "\n[★ 현재 비트는 2막 전반 — Cost는 '작은 균열'. 주인공은 당황하지만 Strategy를 고집한다.]"
+    elif 9 <= beat_number <= 11:
+        stage_hint = "\n[★ 현재 비트는 2막 후반 — Cost는 '실재 손상'. 주인공은 Strategy를 더 강하게 밀어붙인다.]"
+    elif 12 <= beat_number <= 16:
+        stage_hint = "\n[★ 현재 비트는 3막 — Cost는 '부정할 수 없는 현실'. Strategy 전환이 강제된다.]"
+    return WRITER_BJND_SCENE_ENFORCER + stage_hint
+
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.1 NEW MODULE 2 — CREATOR SENSIBILITY (감성 3요소)
+# 관객의 몸과 마음이 반응하는 씬 설계
+# ═══════════════════════════════════════════════════════════
+
+WRITER_CREATOR_SENSIBILITY = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+★ 창작자 감성 3요소 — 관객의 몸이 반응하는가 ★
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+기술적으로 정확한 씬이 아니라 관객의 몸과 마음이 반응하는 씬을 써라.
+다음 3요소는 이 비트의 집필 과정 내내 작동해야 한다.
+
+[요소 1] PHYSICALITY OF EMPATHY — 공감의 물리성
+
+이 비트에 최소 1개의 씬은 관객의 신체 반응을 설계해야 한다.
+신체 반응 7종 중 하나를 목표로:
+  · 호흡 멎음 (긴장/공포)
+  · 가슴 뜨거워짐 (감동)
+  · 눈 젖음 (슬픔)
+  · 웃음 터짐 (해방/코미디)
+  · 등골 서늘함 (공포/충격)
+  · 배꼽 빠짐 (코미디 극치)
+  · 손바닥 땀 (스릴)
+
+❌ 사건만 있는 지문: "재중이 USB를 열어본다. 충격받는다."
+✅ 신체 반응 설계: "재중의 손가락이 USB에 닿는다. 0.5초 멈춘다. 호흡이
+    얕아진다. 파일을 연다. 화면 불빛이 얼굴을 비춘다. 재중이 숨을 쉬지 않는다."
+
+답할 수 없으면 그 비트는 '기능만 있고 감각이 없는 비트'다. 재집필.
+
+[요소 2] SILENCE DESIGN — 침묵의 설계
+
+이 비트에 최소 1회의 '의도된 침묵'을 설계하라. 3유형 중 하나:
+  ■ 거부의 침묵: 답할 수 있지만 답하지 않음
+  ■ 무력의 침묵: 답하고 싶지만 답하지 못함
+  ■ 충만의 침묵: 말이 필요 없는 이해
+
+지문에 명시적 지시를 써라: "[침묵 3초]", "[긴 정적]", "답하지 않는다."
+★ Too Wet 금지 원칙과 완벽히 시너지 — 말을 아껴서 감정을 쌓는다. ★
+
+[요소 3] PLANT AESTHETICS — 씨앗의 미학
+
+Plant의 원칙:
+  · 1막 Plant 씬은 '의미 없어 보여야' 한다 — 관객이 주의하지 않도록
+  · 3막 Payoff 씬은 '의미 전체가 드러나야' 한다 — 관객이 놀라도록
+  · Plant 없는 Payoff = 데우스 엑스 마키나 (금지)
+  · Payoff 없는 Plant = 잃어버린 약속 (금지)
+
+★ 1막 Plant 씬을 쓸 때는 "이것이 나중에 회수될 것이다"를 숨기고 써라. ★
+  강조하면 관객이 눈치채 버려서 3막 쾌감이 사라진다.
+""".strip()
+
+
+def get_creator_sensibility() -> str:
+    """창작자 감성 3요소 모듈 반환 (모든 비트에 주입)"""
+    return WRITER_CREATOR_SENSIBILITY
+
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.1 NEW MODULE 3 — BJND BLOCK 빌더
+# Creator Engine JSON에서 받은 BJND 데이터를 프롬프트 블록으로 포맷팅
+# ═══════════════════════════════════════════════════════════
+
+def build_bjnd_block(bjnd_data: str) -> str:
+    """
+    Creator Engine의 BJND 데이터를 Writer 비트 집필 프롬프트용 블록으로 포맷팅.
+    빈 문자열이 들어오면 빈 블록 반환 (하위 호환).
+    """
+    if not bjnd_data or not bjnd_data.strip():
+        return ""
+    return f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+★★★ 이 작품의 BJND 설계 — Creator Engine 확정 (최우선) ★★★
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{bjnd_data.strip()}
+
+★ 위 BJND는 이 작품 전용으로 확정된 서사 엔진이다. ★
+★ 매 씬에서 Strategy가 행동으로 드러나야 한다. ★
+★ 비트 구간에 맞는 Cost 단계로 누적되어야 한다. ★
+★ 엔딩은 위 Ending Payoff를 구현해야 한다. 외적 선택으로 단순화 금지. ★
+""".strip()
+
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.1 NEW MODULE 4 — 동적 엔딩 규칙
+# Creator의 ending_payoff_type에 따라 엔딩 규칙을 분기
+# "internal_transformation"이면 새 규칙 (혼자 성장 허용)
+# "external_choice" 또는 빈 값이면 기존 v3.0 규칙 폴백
+# ═══════════════════════════════════════════════════════════
+
+def build_ending_rule_block(ending_payoff_type: str = "", ending_payoff: str = "") -> str:
+    """
+    Creator의 Ending Payoff Type에 따라 엔딩 규칙 블록 생성.
+    빈 값이면 빈 문자열 반환 → build_write_beat_prompt에서 기존 v3.0 로직으로 폴백.
+    """
+    if not ending_payoff_type:
+        return ""
+    
+    ep_text = ending_payoff.strip() if ending_payoff else "(Creator Ending Payoff 미지정)"
+    
+    if ending_payoff_type == "internal_transformation":
+        return f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+★★★ Beat 15~16 엔딩 설계 — Creator 확정: 내적 전환형 ★★★
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+★ 이 작품의 Ending Payoff ★
+{ep_text}
+
+[엔딩 타입: INTERNAL_TRANSFORMATION — 내적 전환형]
+Creator Engine이 '외적 선택이 아닌 내적 전환'으로 이 작품의 엔딩을 확정했다.
+Writer는 이 설계를 존중해야 한다.
+
+[엔딩 3단계 구조 — 반드시 이 흐름대로]
+① Beat 12~13: Strategy_1의 완전한 붕괴 씬
+② Beat 14: Strategy_2의 첫 실행 씬 (주저하며·서툴게)
+③ Beat 15~16: Strategy_2의 확정 씬 — signature_moment
+
+[★ 절대 금지 — BJND 배반 패턴]
+❌ 외적 선택으로 단순화: "주인공이 A/B 중 한 명을 택한다" 식의 엔딩
+❌ 로맨스 장르라고 해서 기계적으로 '둘이 이어짐'을 강제하지 말 것
+❌ 주인공이 자기 Strategy 전환을 확인하지 않고 끝남
+
+[★ 필수 — Ending Payoff 구현 체크]
+□ 위 Ending Payoff 텍스트가 마지막 씬에 구체적 행동/이미지로 구현되었는가?
+□ 주인공의 첫 씬과 마지막 씬의 '같은 행동'이 다른 의미로 읽히는가?
+□ 관객이 '나도 저렇게 변할 수 있을까'를 생각할 signature_moment가 있는가?
+□ 영화 끝난 뒤 관객 입에 남을 잔상 이미지 1컷이 설계되었는가?
+
+[로맨틱 코미디의 경우 — 쿠킹클래스 유형]
+이 작품이 로맨틱 코미디지만 Ending Payoff가 '내적 전환'이라면:
+  · 두 남자 중 한 명을 '선택'하는 엔딩은 금지
+  · 대신 '고를 수 없음 자체의 선언' 또는 '분류를 내려놓는 순간'이 엔딩
+  · 웃음과 따뜻함의 톤은 유지하되, 감정의 착지점이 '자기 발견'이어야 한다
+  · 장르의 톤(웃음/따뜻함)은 지키고, 엔딩의 구조(내적 전환)는 BJND 설계를 따른다
+
+★ 이것은 장르 약속 위반이 아니다. ★
+★ 이 작품의 장르 약속은 애초에 '자기 발견'으로 설계되어 있다. ★
+""".strip()
+    
+    elif ending_payoff_type == "external_choice":
+        return f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+★★★ Beat 15~16 엔딩 설계 — Creator 확정: 외적 선택형 ★★★
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+★ 이 작품의 Ending Payoff ★
+{ep_text}
+
+[엔딩 타입: EXTERNAL_CHOICE — 외적 선택형]
+주인공이 명확한 외적 행동(선택/대결/고백/승리)으로 엔딩을 확정한다.
+장르 약속(로맨스=커플 성사 / 스릴러=진실 폭로 등)을 지켜라.
+(세부 장르 엔딩 규칙은 이하 장르 기반 블록 참조)
+""".strip()
+    
+    return ""
+
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.1 NEW MODULE 5 — Creator JSON 자동 로더 (main.py에서 import)
+# ═══════════════════════════════════════════════════════════
+
+def extract_from_creator_json(creator_json: dict) -> dict:
+    """
+    Creator Engine v2.3+ JSON을 받아 Writer 11개 입력 필드 + v3.1 신규 3개 필드로 변환.
+    v1.9/v2.2 구형 프로젝트는 신규 필드가 빈 문자열로 반환됨.
+    """
+    result = {k: "" for k in [
+        "title", "logline", "intent", "gns", "characters", "opening_strategy",
+        "world", "structure", "scene_design", "treatment", "tone",
+        "bjnd_data", "ending_payoff", "ending_payoff_type"
+    ]}
+    
+    if not creator_json:
+        return result
+    
+    p = creator_json.get("project", creator_json)
+    result["title"] = p.get("title", "")
+    
+    core = p.get("core", {}) or {}
+    
+    # 로그라인
+    logline_pack = core.get("logline_pack", {}) or {}
+    if isinstance(logline_pack, dict):
+        result["logline"] = (logline_pack.get("washed", "") or 
+                             logline_pack.get("original", "") or 
+                             logline_pack.get("investor", ""))
+    elif isinstance(logline_pack, str):
+        result["logline"] = logline_pack
+    
+    # 기획의도
+    intent_src = core.get("project_intent") or core.get("key_points") or {}
+    if isinstance(intent_src, dict):
+        result["intent"] = "\n".join(f"{k}: {v}" for k, v in intent_src.items() if v)
+    elif isinstance(intent_src, str):
+        result["intent"] = intent_src
+    
+    # GNS
+    gns_src = core.get("goal_need_strategy", {}) or {}
+    if isinstance(gns_src, dict):
+        result["gns"] = "\n".join(f"{k}: {v}" for k, v in gns_src.items() if v)
+        result["ending_payoff"] = gns_src.get("ending_payoff", "")
+        et = gns_src.get("ending_type") or gns_src.get("ending_payoff_type")
+        if et:
+            result["ending_payoff_type"] = et
+        else:
+            # 자동 추정: 내적 전환 키워드 확대판
+            ep = result["ending_payoff"] or ""
+            internal_keywords = [
+                "깨달", "자각", "발견", "받아들", "인식", "내려놓",
+                "고를 수 없", "선택할 수 없",
+                "멈추", "채워진다", "비로소", "처음으로",  # 쿠킹클래스 스타일
+                "Need(", "Goal(",  # BJND 메타 표기 (Goal/Need 충족 언급 = 내적 전환)
+                "자기 자신", "있는 그대로",
+                "간보", "분석을",  # 쿠킹클래스 고유 표현
+            ]
+            if any(kw in ep for kw in internal_keywords):
+                result["ending_payoff_type"] = "internal_transformation"
+            # else: 빈 문자열 유지 → 폴백: 기존 장르 엔딩 규칙 사용
+    
+    # BJND 데이터 블록
+    nd = core.get("narrative_drive", {}) or {}
+    bjnd_lines = []
+    if isinstance(nd, dict):
+        for k in ["desire_origin", "origin_detail", "arc_direction", 
+                  "resolution_strategy", "goal_need_gap"]:
+            v = nd.get(k)
+            if v:
+                bjnd_lines.append(f"[{k}] {v}")
+    if isinstance(gns_src, dict):
+        for k in ["goal", "need", "strategy", "strategy_transformation",
+                  "cost_1", "cost_2", "cost_3", "ending_payoff", "risk"]:
+            v = gns_src.get(k)
+            if v:
+                bjnd_lines.append(f"[{k}] {v}")
+    result["bjnd_data"] = "\n".join(bjnd_lines)
+    
+    # 오프닝 전략
+    opening = core.get("opening_strategy", {}) or {}
+    if isinstance(opening, dict):
+        key_map = {
+            "opening_type": "[오프닝 타입]",
+            "opening_intent": "[오프닝 의도]",
+            "dopamine_point": "[도파민 포인트]",
+            "opening_to_act1_link": "[1막 연결 방식]",
+            "opening_hook_line": "[훅 라인/이미지]",
+            "genre_dna_check": "[장르 DNA 체크]",
+        }
+        lines = [f"{label} {opening[k]}" for k, label in key_map.items() if opening.get(k)]
+        result["opening_strategy"] = "\n".join(lines)
+    elif isinstance(opening, str):
+        result["opening_strategy"] = opening
+    
+    # 캐릭터
+    char_parts = []
+    cb = p.get("char_bible", {}) or {}
+    if isinstance(cb, dict):
+        for name, bible in cb.items():
+            if isinstance(bible, dict):
+                char_parts.append(f"=== {name} ===")
+                for k, v in bible.items():
+                    if v:
+                        char_parts.append(f"{k}: {v}")
+            elif isinstance(bible, str):
+                char_parts.append(f"=== {name} ===\n{bible}")
+    for c in core.get("characters", []) or []:
+        if isinstance(c, dict):
+            name = c.get("name", "(무명)")
+            char_parts.append(f"--- {name} ---")
+            for k, v in c.items():
+                if k != "name" and v:
+                    char_parts.append(f"{k}: {v}")
+    result["characters"] = "\n".join(char_parts)
+    
+    # 세계관
+    wb = core.get("world_build", {}) or {}
+    if isinstance(wb, dict):
+        result["world"] = "\n".join(f"{k}: {v}" for k, v in wb.items() if v)
+    elif isinstance(wb, str):
+        result["world"] = wb
+    
+    # 구조 / 씬 설계 / 트리트먼트 / 톤 — 재귀 변환
+    for field_name, src_key in [("structure", "structure_story"),
+                                  ("scene_design", "scene_design"),
+                                  ("treatment", "treatment"),
+                                  ("tone", "tone_doc")]:
+        src = p.get(src_key, {}) or {}
+        if isinstance(src, dict):
+            result[field_name] = _dict_to_text(src)
+    
+    return result
+
+
+def _dict_to_text(d: dict, indent: int = 0) -> str:
+    """딕셔너리를 읽기 좋은 텍스트 블록으로 변환 (재귀)."""
+    lines = []
+    prefix = "  " * indent
+    for k, v in d.items():
+        if isinstance(v, dict):
+            lines.append(f"{prefix}[{k}]")
+            lines.append(_dict_to_text(v, indent + 1))
+        elif isinstance(v, (list, tuple)):
+            lines.append(f"{prefix}[{k}]")
+            for item in v:
+                if isinstance(item, dict):
+                    lines.append(_dict_to_text(item, indent + 1))
+                else:
+                    lines.append(f"{prefix}  - {item}")
+        elif v:
+            lines.append(f"{prefix}{k}: {v}")
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════
+# v3.1 PATCH END — 이하는 기존 v3.0 코드 그대로 유지
+# ═══════════════════════════════════════════════════════════
 
 
 # ═══════════════════════════════════════════════════════════
@@ -3235,7 +3641,10 @@ def build_write_beat_prompt(
     logline: str = "",
     world: str = "",
     story_elements: str = "",
-    opening_strategy: str = "",  # ★ v3.6 신규 — Creator Engine 산출물
+    opening_strategy: str = "",       # v3.6 — Creator Engine 오프닝 전략
+    bjnd_data: str = "",              # ★ v3.1 신규 — Creator BJND 설계
+    ending_payoff: str = "",          # ★ v3.1 신규 — Creator Ending Payoff 텍스트
+    ending_payoff_type: str = "",     # ★ v3.1 신규 — "internal_transformation" / "external_choice" / ""
     fact_based: bool = False,
     historical: bool = False,
     historical_type: str = "",
@@ -3258,6 +3667,13 @@ def build_write_beat_prompt(
     prev_block = ""
     if previous_scene_text:
         prev_block = f"\n[직전 비트 마지막 부분 — 연속성 유지]\n{previous_scene_text[-2500:]}\n"
+
+    # ────────────────────────────────────────────────
+    # ★ v3.1 신규 블록 — 모든 비트에 주입
+    # ────────────────────────────────────────────────
+    bjnd_block_text = build_bjnd_block(bjnd_data) if bjnd_data else ""
+    bjnd_enforcer_text = get_bjnd_scene_enforcer(beat_number)
+    sensibility_text = get_creator_sensibility()
 
     # Beat 1 = 오프닝 특별 지시 (OPENING MASTERY v2.2 주입)
     opening_block = ""
@@ -3379,9 +3795,18 @@ def build_write_beat_prompt(
   → Yes면 장르 대기가 없는 것이다. 장르의 감각을 씬 곳곳에 심어라.
 """
 
-    # Beat 15 = 엔딩 특별 지시 (v3.4 신규) — 장르 엔딩 약속 강제
+    # Beat 15 = 엔딩 특별 지시
+    # ★ v3.1 — Creator의 ending_payoff_type이 있으면 그것을 최우선 사용
+    #           없으면 기존 v3.0 장르 기반 규칙으로 폴백 (하위 호환)
     ending_block = ""
     if beat_number == 15:
+        # v3.1: Creator가 엔딩 타입을 명시했으면 새 규칙 사용
+        creator_ending = build_ending_rule_block(ending_payoff_type, ending_payoff)
+        if creator_ending:
+            ending_block = creator_ending
+    
+    if beat_number == 15 and not ending_block:
+        # 폴백: Creator 정보가 없을 때만 기존 v3.0 장르 기반 규칙 사용
         dna = _resolve_opening_dna(genre)
         ending_rules_map = {
             "romance": {
@@ -3562,6 +3987,13 @@ AI가 자주 저지르는 엔딩 실수:
 {opening_block}
 {ending_block}
 {atmosphere_block}
+
+{bjnd_block_text}
+
+{bjnd_enforcer_text}
+
+{sensibility_text}
+
 [씬 플랜 — 이 비트의 씬을 찾아 정확히 따르라]
 {scene_plan}
 
