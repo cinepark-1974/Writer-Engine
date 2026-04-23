@@ -1,9 +1,17 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v3.1.1
-# prompt.py — Full Version (Creator Engine v2.3.10 동기화)
+# BLUE JEANS SCREENPLAY WRITER ENGINE v3.1.2
+# prompt.py — Full Version (Creator Engine v2.4.0 동기화)
 # © 2026 BLUE JEANS PICTURES
 #
-# v3.1.1 주요 변경사항 (2026-04-23):
+# v3.1.2 주요 변경사항 (2026-04-23):
+# - Period Pack 비트 집필 시 재주입 (시대극 디테일 휘발 방지)
+# - 10개 시대 자동 감지 (조선 전기~민주화기)
+# - 각 시대 10개 필드 주입: 복식/관직호칭/주거/통화/음식/교통/언어결/
+#   사건맥락/금지오류/핵심레퍼런스씬
+# - 다중 시대 교차 전개(플래시백/회상 구조) 자동 안내
+# - period_pack.py 부재 시 조용히 폴백 (하위 호환)
+#
+# v3.1.1 (2026-04-23):
 # - 범죄 서브장르 OVERRIDE 3종 신설 (MOBFILM / DRUGFILM / CONMAN)
 # - 판별 함수 3종 (_is_mobfilm / _is_drugfilm / _is_conman)
 # - _is_thriller 확장 (느와르·조폭·갱스터 인식)
@@ -17,7 +25,7 @@
 # - Creator JSON 자동 로더
 # ─────────────────────────────────────────────────────────────
 
-ENGINE_VERSION = "v3.1.1"
+ENGINE_VERSION = "v3.1.2"
 ENGINE_BUILD_DATE = "2026-04-23"
 
 
@@ -485,6 +493,63 @@ def build_profession_block_for_writer(scan_text: str, max_categories: int = 3) -
         
         return intro + "\n" + "\n\n".join(blocks) + "\n"
     
+    except Exception:
+        # 기타 예외도 조용히 통과
+        return ""
+
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.1.2 NEW MODULE — Period Pack 비트 집필용 재주입
+# Creator Engine v2.4.0의 period_pack.py를 Writer에서도 활용.
+# 비트 집필 단계에서 시대 키워드를 스캔해 휘발 방지를 위해 재주입.
+# ═══════════════════════════════════════════════════════════
+
+def build_period_block_for_writer(scan_text: str, max_periods: int = 2) -> str:
+    """
+    로그라인/세계관/트리트먼트 등 텍스트를 스캔해 시대 키워드 감지 후,
+    해당 시대 디테일 블록을 비트 집필용으로 포맷팅하여 반환.
+
+    Creator Engine이 Core/Treatment에 이미 시대 설정을 녹였더라도,
+    15비트 집필 분량이 누적되면서 복식·호칭·공간·언어 결 같은 시대
+    디테일이 휘발될 수 있음. 비트마다 재주입해 휘발을 방지한다.
+
+    Args:
+        scan_text: 스캔 대상 텍스트 (보통 world + logline + treatment 앞부분)
+        max_periods: 주입할 최대 시대 수 (기본 2 — 교차 전개 작품 대응)
+
+    Returns:
+        str: 비트 집필 프롬프트에 삽입할 시대 블록. 감지 실패 또는
+             period_pack.py 부재 시 빈 문자열 반환 (하위 호환).
+    """
+    if not scan_text or not scan_text.strip():
+        return ""
+
+    try:
+        import period_pack as PPK
+    except ImportError:
+        # period_pack.py가 없어도 크래시 없이 통과
+        return ""
+    except Exception:
+        return ""
+
+    try:
+        # period_pack의 공식 빌더를 그대로 사용 (Creator와 동일 포맷 유지)
+        block = PPK.build_period_block(
+            locked_text=scan_text,
+            period_keys=None,
+            max_periods=max_periods,
+        )
+        if not block or not block.strip():
+            return ""
+
+        # 비트 집필용 재주입 안내문 추가
+        intro = "[⚡ 시대 디테일 — v3.1.2 재주입 (휘발 방지)]\n"
+        intro += "아래 시대 디테일을 이 비트의 모든 씬·대사·지문에 구체적으로 반영하라.\n"
+        intro += "복식·호칭·공간·언어 결은 설명이 아니라 '당연히 그 시대의 것'으로 자연스럽게 녹여라.\n"
+        intro += "현대 화법·현대 소품·현대 호칭 절대 금지. 작가의 고증 오류 체크리스트를 반드시 통과할 것.\n"
+
+        return intro + "\n" + block + "\n"
+
     except Exception:
         # 기타 예외도 조용히 통과
         return ""
@@ -4239,6 +4304,18 @@ def build_write_beat_prompt(
     profession_scan = (characters or "") + "\n" + (logline or "") + "\n" + (scene_plan or "")[:3000]
     profession_block_text = build_profession_block_for_writer(profession_scan, max_categories=3)
 
+    # ★ v3.1.2 신규 블록 — Period Pack 재주입 (시대 디테일 휘발 방지)
+    # 세계관 + 로그라인 + 트리트먼트 + 스토리 요소를 스캔해 시대 자동 감지 후 재주입
+    # Writer에는 LOCKED 블록이 직접 들어오지 않으므로, Creator의 시대 설정이 
+    # 녹아있을 가능성이 가장 높은 4개 필드를 합쳐서 스캔 대상으로 사용.
+    period_scan = (
+        (world or "")
+        + "\n" + (logline or "")
+        + "\n" + (treatment or "")[:4000]
+        + "\n" + (story_elements or "")
+    )
+    period_block_text = build_period_block_for_writer(period_scan, max_periods=2)
+
     # Beat 1 = 오프닝 특별 지시 (OPENING MASTERY v2.2 주입)
     opening_block = ""
     if beat_number == 1:
@@ -4565,6 +4642,8 @@ AI가 자주 저지르는 엔딩 실수:
 {char_block}
 
 {profession_block_text}
+
+{period_block_text}
 
 [세계관]
 {world[:1500] if world else '(씬 플랜 참조)'}
