@@ -22,6 +22,44 @@ from prompt import (
 ANTHROPIC_MODEL_WRITE = "claude-opus-4-6"      # 집필 (비트 쓰기, 다시 쓰기) — 최고 품질
 ANTHROPIC_MODEL_PLAN  = "claude-sonnet-4-6"    # 구조 작업 (씬 플랜, 요소 추출) — 비용 효율
 
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.1.2 — 다운로드 파일명 생성 헬퍼
+# 제목을 우선 사용하되, 비어 있으면 장르로 폴백.
+# 윈도우/맥 모두에서 문제가 될 수 있는 문자를 안전하게 정제.
+# ═══════════════════════════════════════════════════════════
+
+def _sanitize_filename_segment(text: str, max_len: int = 40) -> str:
+    """파일명에 쓸 수 있도록 텍스트 정제.
+    - 파일시스템 금지 문자 제거 (/ \\ : * ? " < > |)
+    - 공백은 언더스코어로 변환
+    - 선행/후행 공백·점 제거 (윈도우 금지)
+    - 너무 길면 max_len까지 잘라냄
+    """
+    if not text:
+        return ""
+    s = str(text).strip()
+    # 파일시스템 금지 문자 제거
+    for ch in r'/\:*?"<>|':
+        s = s.replace(ch, "")
+    # 연속 공백 → 단일 언더스코어
+    s = "_".join(s.split())
+    # 선행·후행 점 제거 (윈도우 이슈)
+    s = s.strip(". ")
+    if len(s) > max_len:
+        s = s[:max_len].rstrip("_")
+    return s
+
+
+def _build_download_filename(title: str, genre: str, ext: str) -> str:
+    """다운로드 파일명 생성. 제목 우선, 장르는 폴백."""
+    stem = _sanitize_filename_segment(title)
+    if not stem:
+        stem = _sanitize_filename_segment(genre) or "screenplay"
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+    return f"{stem}_{timestamp}.{ext}"
+
+
 # ─────────────────────────────────────
 # Page Config
 # ─────────────────────────────────────
@@ -1383,7 +1421,9 @@ if st.session_state.get("beats_done"):
         st.download_button(
             label=f"TXT 저장 ({done_count}/15)",
             data=all_text,
-            file_name=f"screenplay_{genre}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+            file_name=_build_download_filename(
+                st.session_state.get("title", ""), genre, "txt"
+            ),
             mime="text/plain",
             use_container_width=True,
         )
@@ -1397,7 +1437,9 @@ if st.session_state.get("beats_done"):
             st.download_button(
                 label=f"DOCX 저장 ({done_count}/15)",
                 data=docx_bytes,
-                file_name=f"screenplay_{genre}_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+                file_name=_build_download_filename(
+                    st.session_state.get("title", ""), genre, "docx"
+                ),
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 use_container_width=True,
             )
