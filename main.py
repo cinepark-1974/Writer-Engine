@@ -205,6 +205,73 @@ def _split_action_paragraph(text: str) -> list:
 
 
 # ═══════════════════════════════════════════════════════════
+# ★ v3.1.5 — PROP CONTINUITY 메모 정제
+# AI가 비트 끝에 작성한 [소품 상태 / S#N 종료 시점] INTERNAL 메모를
+# 최종 시나리오 본문에서 분리·제거.
+# - 메모는 AI가 다음 비트 집필 시 참조하도록 prompt가 활용
+# - 그러나 출력 시나리오 본문에는 노출되면 안 됨
+# - DOCX 빌더가 텍스트를 처리하기 직전에 strip
+# ═══════════════════════════════════════════════════════════
+
+import re as _re_prop
+
+
+def _strip_prop_state_memos(text: str) -> str:
+    """
+    텍스트에서 [소품 상태 / ...] 메모 블록을 제거.
+    
+    제거 대상 패턴:
+        [소품 상태 / S#N 종료 시점]
+        - 노트(세웅): 가방 안 (수업 중 사용 → 회수)
+        - 화환: 입구 (시든 채)
+        ...
+    
+    AI가 작성한 메모는 보통:
+    1) 빈 줄 + [소품 상태 ... ] 헤더로 시작
+    2) 여러 줄의 '- 항목: 위치' 라인
+    3) 다음 빈 줄 또는 텍스트 끝까지
+    
+    Returns:
+        메모가 제거된 텍스트.
+    """
+    if not text:
+        return text
+    
+    # 패턴 1: 코드블록 안에 들어있는 케이스 (```로 감싼 형태)
+    # ```\n[소품 상태 ...]\n- ...\n```
+    pattern_codeblock = _re_prop.compile(
+        r'```[^\n]*\n\[소품\s*상태[^\]]*\][\s\S]*?```',
+        _re_prop.MULTILINE
+    )
+    text = pattern_codeblock.sub('', text)
+    
+    # 패턴 2: 일반 텍스트 안의 [소품 상태] 블록
+    # [소품 상태 ...] 헤더 + - 로 시작하는 라인들
+    # 빈 줄(또는 다른 패턴 시작)이 나올 때까지 모두 제거
+    pattern_inline = _re_prop.compile(
+        r'\n*\[소품\s*상태[^\]]*\]\s*\n'  # 헤더 라인
+        r'(?:[\s]*[-•·][^\n]*\n?)+',       # 항목 라인들 (- 또는 • 또는 ·)
+        _re_prop.MULTILINE
+    )
+    text = pattern_inline.sub('\n', text)
+    
+    # 패턴 3: 코드블록 + INTERNAL 메모 라벨
+    # AI가 가끔 "INTERNAL: 소품 상태" 같은 변형도 사용 가능
+    pattern_internal = _re_prop.compile(
+        r'\n*\[?(?:INTERNAL|작가\s*노트|작가노트|소품\s*추적)[^\]]*\]?\s*\n'
+        r'(?:\[소품\s*상태[^\]]*\]\s*\n)?'
+        r'(?:[\s]*[-•·][^\n]*\n?)+',
+        _re_prop.IGNORECASE | _re_prop.MULTILINE
+    )
+    text = pattern_internal.sub('\n', text)
+    
+    # 연속된 빈 줄 정리 (3개 이상 → 2개)
+    text = _re_prop.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip()
+
+
+# ═══════════════════════════════════════════════════════════
 # ★ v3.1.4 — INSERT 시스템 (화면 텍스트 표기)
 # 카톡·문자·이메일·유튜브·뉴스 등 화면 인서트를 자동 감지하고
 # DOCX에서 들여쓰기+이탤릭으로 시각 분리.
@@ -1098,6 +1165,11 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
             current_act = b_info["act"]
 
         text = beats_done[b_no]
+
+        # ★ v3.1.5 — PROP CONTINUITY 메모 자동 제거
+        # AI가 비트 끝에 작성한 [소품 상태 / S#N 종료 시점] INTERNAL 메모는
+        # 다음 비트 집필용 참조 자료로만 쓰이고, 최종 시나리오 본문에는 노출 안 됨.
+        text = _strip_prop_state_memos(text)
 
         # ═══════════════════════════════════════════════════════════
         # 대사 형식 붕괴 자동 복구 (v3.4 신규)
