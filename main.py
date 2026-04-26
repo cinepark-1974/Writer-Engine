@@ -205,6 +205,157 @@ def _split_action_paragraph(text: str) -> list:
 
 
 # ═══════════════════════════════════════════════════════════
+# ★ v3.1.4 — INSERT 시스템 (화면 텍스트 표기)
+# 카톡·문자·이메일·유튜브·뉴스 등 화면 인서트를 자동 감지하고
+# DOCX에서 들여쓰기+이탤릭으로 시각 분리.
+# 
+# AI가 prompt.py의 INSERT 시스템 모듈에 따라 작성한 표기를 파싱:
+#   형식 A: INSERT — [헤더] / 본문 줄들 / [/INSERT]
+#   형식 B: [라벨] '본문'  (한 줄)
+#   형식 C: ...지문 안에 자연스럽게 따옴표로 인용...  (인라인)
+# ═══════════════════════════════════════════════════════════
+
+import re as _re_insert
+
+# INSERT 키워드 — 형식 B 자동 감지용 (라벨 안의 키워드)
+_INSERT_LABEL_KEYWORDS = [
+    '카톡', '메신저', '라인', '디스코드', '카카오톡',
+    '문자', 'SMS', 'MMS',
+    '이메일', '메일',
+    '유튜브', 'YouTube', 'youtube', 'TV', '뉴스', '방송',
+    'SNS', '인스타', '인스타그램', '페이스북', '트위터', 'X', '틱톡', 'DM',
+    '검색', '구글', '네이버', '다음',
+    '노트', '일기', '메모', '편지', '손글씨', '쪽지',
+    '신문', '잡지', '기사', '헤드라인',
+    '자막',
+    '알림',
+    '핸드폰', '핸드폰 화면', '폰', '폰 화면', '화면',
+]
+
+
+def _is_insert_label(text: str) -> bool:
+    """[...] 형식 라벨인지 판단 — 형식 B 감지."""
+    text = text.strip()
+    if not (text.startswith('[') and ']' in text):
+        return False
+    # [ ... ] 안의 텍스트 추출
+    label_match = _re_insert.match(r'^\[([^\]]+)\]', text)
+    if not label_match:
+        return False
+    label_inner = label_match.group(1)
+    # 라벨 안에 INSERT 키워드가 있는지 확인
+    return any(kw in label_inner for kw in _INSERT_LABEL_KEYWORDS)
+
+
+def _parse_insert_blocks(text: str) -> list:
+    """
+    여러 줄 텍스트를 받아 INSERT 블록과 일반 텍스트로 분리.
+    
+    Returns:
+        [{'type': 'action'|'insert_block'|'insert_label', 'data': ...}, ...]
+        - action: 일반 지문 텍스트
+        - insert_block: 형식 A (헤더 + 본문 줄들 + 닫기)
+        - insert_label: 형식 B (라벨 한 줄)
+    """
+    if not text or not text.strip():
+        return []
+    
+    lines = text.split('\n')
+    items = []
+    i = 0
+    n = len(lines)
+    accumulated_action = []
+    
+    def flush_action():
+        if accumulated_action:
+            joined = '\n'.join(accumulated_action).strip()
+            if joined:
+                items.append({'type': 'action', 'data': joined})
+            accumulated_action.clear()
+    
+    while i < n:
+        line = lines[i]
+        line_stripped = line.strip()
+        
+        # 형식 A 시작: INSERT — 또는 INSERT - 또는 INSERT:
+        if _re_insert.match(r'^INSERT\s*[—\-:]', line_stripped, _re_insert.IGNORECASE):
+            flush_action()
+            header = line_stripped
+            body_lines = []
+            i += 1
+            # [/INSERT] 또는 빈 줄 + 새 헤딩까지 본문 수집
+            while i < n:
+                bl = lines[i].strip()
+                # 닫기 태그 — 명시적 종료 (라인 자체가 닫기 태그면 소비하고 나감)
+                if _re_insert.match(r'^\[/INSERT\]?$', bl, _re_insert.IGNORECASE):
+                    i += 1
+                    break
+                # 빈 줄 처리
+                if not bl:
+                    # 다음 비-빈 줄 확인
+                    j = i + 1
+                    while j < n and not lines[j].strip():
+                        j += 1
+                    if j >= n:
+                        # 파일 끝 — 종료
+                        i = j
+                        break
+                    next_line = lines[j].strip()
+                    # 다음 줄이 닫기 태그면 그 사이 빈 줄 건너뛰고 닫기 처리
+                    if _re_insert.match(r'^\[/INSERT\]?$', next_line, _re_insert.IGNORECASE):
+                        i = j + 1
+                        break
+                    # 다음 줄이 따옴표로 시작하지 않으면 (= 본문이 끝남) 종료
+                    if not _re_insert.match(r"^['\"\u2018\u2019\u201C\u201D]", next_line):
+                        i = j  # 다음 일반 텍스트 위치로 점프
+                        break
+                    # 같은 INSERT 블록의 본문이 빈 줄을 끼고 계속됨
+                    i += 1
+                    continue
+                body_lines.append(bl)
+                i += 1
+            items.append({
+                'type': 'insert_block',
+                'data': {
+                    'header': header,
+                    'body': body_lines,
+                }
+            })
+            continue
+        
+        # 형식 B: [...] 라벨 — 라벨 안에 키워드가 있을 때
+        if _is_insert_label(line_stripped):
+            flush_action()
+            items.append({'type': 'insert_label', 'data': line_stripped})
+            i += 1
+            continue
+        
+        # 떠도는 [/INSERT] 단독 라인은 무시 (안전망)
+        if _re_insert.match(r'^\[/INSERT\]?$', line_stripped, _re_insert.IGNORECASE):
+            i += 1
+            continue
+        
+        # 일반 지문
+        accumulated_action.append(line)
+        i += 1
+    
+    flush_action()
+    return items
+
+
+def _parse_insert_label(text: str) -> tuple:
+    """
+    형식 B 라벨 한 줄을 (label, body)로 분리.
+    예: "[핸드폰 / 카톡] '아빠: 임대료 30프로 올린다.'"
+        → ("[핸드폰 / 카톡]", "'아빠: 임대료 30프로 올린다.'")
+    """
+    m = _re_insert.match(r'^(\[[^\]]+\])\s*(.*)$', text.strip())
+    if m:
+        return m.group(1), m.group(2).strip()
+    return text, ""
+
+
+# ═══════════════════════════════════════════════════════════
 
 
 
@@ -545,6 +696,40 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
     style_action.paragraph_format.space_after = Pt(2)
     _set_eastasia_font(style_action.element.get_or_add_rPr())
 
+    # ★ v3.1.4 — INSERT 전용 스타일 3종
+    # [스타일 5] INSERT 헤더 — 작은 대문자 느낌, 중간 들여쓰기, 굵게
+    style_insert_header = doc.styles.add_style('인서트헤더', WD_STYLE_TYPE.PARAGRAPH)
+    style_insert_header.base_style = doc.styles['Normal']
+    style_insert_header.font.name = '함초롬바탕'
+    style_insert_header.font.size = Pt(9)
+    style_insert_header.font.bold = True
+    style_insert_header.paragraph_format.left_indent = Cm(2.55)
+    style_insert_header.paragraph_format.space_before = Pt(8)
+    style_insert_header.paragraph_format.space_after = Pt(2)
+    _set_eastasia_font(style_insert_header.element.get_or_add_rPr())
+
+    # [스타일 6] INSERT 본문 — 깊은 들여쓰기, 이탤릭, 본문 표시
+    style_insert_body = doc.styles.add_style('인서트본문', WD_STYLE_TYPE.PARAGRAPH)
+    style_insert_body.base_style = doc.styles['Normal']
+    style_insert_body.font.name = '함초롬바탕'
+    style_insert_body.font.size = Pt(10)
+    style_insert_body.font.italic = True
+    style_insert_body.paragraph_format.left_indent = Cm(2.55)
+    style_insert_body.paragraph_format.space_before = Pt(2)
+    style_insert_body.paragraph_format.space_after = Pt(2)
+    style_insert_body.paragraph_format.line_spacing = 1.4
+    _set_eastasia_font(style_insert_body.element.get_or_add_rPr())
+
+    # [스타일 7] INSERT 라벨식 — 한 줄 짜리 [라벨] '본문' 형식
+    style_insert_label = doc.styles.add_style('인서트라벨', WD_STYLE_TYPE.PARAGRAPH)
+    style_insert_label.base_style = doc.styles['Normal']
+    style_insert_label.font.name = '함초롬바탕'
+    style_insert_label.font.size = Pt(10)
+    style_insert_label.paragraph_format.left_indent = Cm(1.42)
+    style_insert_label.paragraph_format.space_before = Pt(4)
+    style_insert_label.paragraph_format.space_after = Pt(4)
+    _set_eastasia_font(style_insert_label.element.get_or_add_rPr())
+
     # ── 헬퍼 함수 (스타일 기반) ──
     def add_text(text, bold=False, size=None, color=None, align=None):
         """커버 페이지용 범용 텍스트."""
@@ -620,20 +805,106 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
         """지문 — '지문' 스타일 적용.
         
         ★ v3.1.3 — 긴 단락은 의미 비트 단위로 자동 분단.
+        ★ v3.1.4 — INSERT 블록(형식 A·B) 자동 감지 → 전용 스타일로 분기.
+        
         AI 시적 의도 보존을 위해 짧은 단락(150자 미만, 7문장 미만)은 그대로 둠.
         """
-        # 자동 분단 시도
-        sub_paragraphs = _split_action_paragraph(text)
+        # ★ v3.1.4: INSERT 블록 우선 분리
+        items = _parse_insert_blocks(text)
         
         first_p = None
-        for sub in sub_paragraphs:
-            p = doc.add_paragraph(style='지문')
-            r = p.add_run(sub)
-            r.font.name = "함초롬바탕"
-            _set_eastasia_font(r._element.get_or_add_rPr())
+        for item in items:
+            if item['type'] == 'insert_block':
+                # 형식 A — 헤더 + 본문 줄들
+                p = add_insert_block(item['data']['header'], item['data']['body'])
+            elif item['type'] == 'insert_label':
+                # 형식 B — 라벨 한 줄
+                p = add_insert_label(item['data'])
+            else:
+                # 일반 지문 — 분단 알고리즘 적용
+                sub_paragraphs = _split_action_paragraph(item['data'])
+                p = None
+                for sub in sub_paragraphs:
+                    sp = doc.add_paragraph(style='지문')
+                    r = sp.add_run(sub)
+                    r.font.name = "함초롬바탕"
+                    _set_eastasia_font(r._element.get_or_add_rPr())
+                    if p is None:
+                        p = sp
+            
             if first_p is None:
                 first_p = p
+        
         return first_p
+
+    def add_insert_block(header: str, body_lines: list):
+        """★ v3.1.4 — INSERT 블록 (형식 A) 렌더링.
+        
+        헤더(작게·굵게·들여쓰기) + 본문(이탤릭·깊은 들여쓰기) + 자동 빈 줄.
+        예시:
+            INSERT — 핸드폰 카톡 화면
+            
+              '아빠: 임대료 30프로 올린다.'
+              '아빠: 6개월 안에 결정.'
+            
+            [/INSERT]
+        """
+        # 빈 줄 한 개 (시각 분리)
+        doc.add_paragraph("")
+        
+        # 헤더 단락
+        first_p = doc.add_paragraph(style='인서트헤더')
+        r = first_p.add_run(header.strip())
+        r.font.name = "함초롬바탕"
+        _set_eastasia_font(r._element.get_or_add_rPr())
+        
+        # 본문 줄들 (각 줄을 별도 단락으로)
+        for line in body_lines:
+            line = line.strip()
+            if not line:
+                continue
+            p = doc.add_paragraph(style='인서트본문')
+            r = p.add_run(line)
+            r.font.name = "함초롬바탕"
+            r.italic = True  # 명시적 이탤릭 (스타일 상속에 더해 안전망)
+            _set_eastasia_font(r._element.get_or_add_rPr())
+        
+        # 닫기 표시 (감독·배우용 시각 종료 신호)
+        close_p = doc.add_paragraph(style='인서트헤더')
+        cr = close_p.add_run('[/INSERT]')
+        cr.font.name = "함초롬바탕"
+        _set_eastasia_font(cr._element.get_or_add_rPr())
+        
+        # 빈 줄 한 개 (시각 분리)
+        doc.add_paragraph("")
+        
+        return first_p
+
+    def add_insert_label(text: str):
+        """★ v3.1.4 — 형식 B 라벨식 INSERT 한 줄 렌더링.
+        
+        예: [핸드폰 / 카톡] '아빠: 임대료 30프로 올린다.'
+            ↑ 라벨 부분 (작게)    ↑ 본문 부분 (이탤릭)
+        """
+        label, body = _parse_insert_label(text)
+        
+        p = doc.add_paragraph(style='인서트라벨')
+        
+        # 라벨 부분 (작게, 굵게)
+        r_label = p.add_run(label + ' ')
+        r_label.font.name = "함초롬바탕"
+        r_label.font.size = Pt(9)
+        r_label.bold = True
+        _set_eastasia_font(r_label._element.get_or_add_rPr())
+        
+        # 본문 부분 (이탤릭)
+        if body:
+            r_body = p.add_run(body)
+            r_body.font.name = "함초롬바탕"
+            r_body.italic = True
+            _set_eastasia_font(r_body._element.get_or_add_rPr())
+        
+        return p
 
     # ── 커버 페이지 ──
     for _ in range(6):
