@@ -60,6 +60,154 @@ def _build_download_filename(title: str, genre: str, ext: str) -> str:
     return f"{stem}_{timestamp}.{ext}"
 
 
+# ═══════════════════════════════════════════════════════════
+# ★ v3.1.3 — 지문(액션 라인) 자동 분단 헬퍼
+# AI가 6~9문장을 한 문단에 몰아넣은 경우, 의미 비트 단위로 분단.
+# AI의 시적 의도가 명확한 경우(짧은 단락)는 절대 건드리지 않음.
+# ═══════════════════════════════════════════════════════════
+
+# 분단 임계값 — 데이터 분석 기반 (실제 결과물 481개 단락 분포 검증)
+_ACTION_SPLIT_CHAR_THRESHOLD = 150     # 자수 임계
+_ACTION_SPLIT_SENTENCE_THRESHOLD = 7   # 문장수 임계
+_ACTION_SPLIT_HARD_CHARS = 240         # 하드 임계 (이 이상은 무조건 분단)
+_ACTION_SPLIT_HARD_SENTENCES = 9       # 하드 문장수 임계
+
+
+def _split_sentences(text: str):
+    """한국어 지문을 문장 단위로 쪼갠다. 마침표·물음표·느낌표 + 공백 기준.
+    문장 부호 뒤 공백이 없는 경우(약어 등)는 분리하지 않는다.
+    """
+    import re as _re
+    # (?<=[.!?])\s+ 로 분리하되, 한국어 마침표 뒤 공백을 기준
+    parts = _re.split(r'(?<=[.!?])\s+', text.strip())
+    return [s.strip() for s in parts if s.strip()]
+
+
+def _detect_paragraph_break_index(sentences: list) -> int:
+    """
+    문장 리스트에서 가장 자연스러운 분단 위치(인덱스)를 찾는다.
+    분단 트리거 4종에 따라 우선순위로 탐색.
+    찾지 못하면 -1 반환.
+    
+    트리거 우선순위:
+      1) 시간 압축 종료: "수업이 진행된다" / "수업이 끝난다" 같은 큰 사건 변화
+      2) 동작 주체 변경: 단체 → 개인, 또는 인물 ↔ 다른 인물
+      3) 카메라 시점 변경: 인물 동작 ↔ 정물·공간 묘사 (지시 대명사 없는 명사구 시작)
+    """
+    import re as _re
+    n = len(sentences)
+    if n < 4:
+        return -1
+    
+    # 검색 범위: 양 끝 1문장씩 제외 (너무 짧은 분단 방지)
+    candidates = []
+    
+    for i in range(2, n - 1):
+        cur = sentences[i]
+        prev = sentences[i - 1]
+        score = 0
+        
+        # 트리거 1: 시간 압축 / 큰 상황 전환 키워드
+        time_break_patterns = [
+            r'수업이?\s*(끝나|진행)',
+            r'시간이\s*(흐른|지난|경과)',
+            r'(다음\s*날|이튿날|새벽|아침|저녁|밤)',
+            r'몇\s*(분|시간|일)\s*(후|뒤)',
+            r'(직후|잠시\s*후|곧)',
+        ]
+        for pat in time_break_patterns:
+            if _re.search(pat, cur):
+                score += 10
+                break
+        
+        # 트리거 2: 인물명 + 단독/혼자/홀로 (주체 전환 신호)
+        if _re.search(r'(혼자|홀로|단독)', cur):
+            score += 6
+        
+        # 트리거 3: 정물·공간 묘사 시작 (인물 주어 없는 명사구)
+        # "긴 테이블 위에...", "벽에...", "창밖에..." 같은 패턴
+        space_patterns = [
+            r'^(긴\s|넓은\s|좁은\s|텅\s|빈\s|새|작은\s|커다란\s)',
+            r'^(테이블|벽|창|문|바닥|천장|복도|골목)\s',
+            r'^(아일랜드|카운터|책상|의자|침대|소파)\s',
+            r'^[가-힣]+\s위에',  # "~ 위에" 시작
+        ]
+        prev_has_actor = bool(_re.search(r'[가-힣]{2,4}이\s', prev) or _re.search(r'[가-힣]{2,4}가\s', prev))
+        cur_is_space = any(_re.search(pat, cur) for pat in space_patterns)
+        if prev_has_actor and cur_is_space:
+            score += 5
+        
+        # 트리거 4: 인물 주체 변경 ("A가 ~한다." → "B가 ~한다.")
+        prev_actor = _re.match(r'^([가-힣]{2,4})(이|가)\s', prev)
+        cur_actor = _re.match(r'^([가-힣]{2,4})(이|가)\s', cur)
+        if prev_actor and cur_actor and prev_actor.group(1) != cur_actor.group(1):
+            score += 4
+        
+        # 위치 보정: 단락의 정중앙 근처가 가장 자연스러운 분단 위치
+        center_distance = abs(i - n // 2)
+        position_bonus = max(0, 3 - center_distance)
+        score += position_bonus
+        
+        if score >= 5:
+            candidates.append((i, score))
+    
+    if not candidates:
+        return -1
+    
+    # 가장 점수 높은 위치
+    candidates.sort(key=lambda x: -x[1])
+    return candidates[0][0]
+
+
+def _split_action_paragraph(text: str) -> list:
+    """
+    지문 단락이 임계값을 넘으면 의미 비트 단위로 분할.
+    임계값 미만이거나 적절한 분단 지점을 못 찾으면 [text] 그대로 반환.
+    
+    분단 조건 (둘 중 하나 충족):
+      - 자수 >= 150자
+      - 자수 >= 100자 AND 문장수 >= 7 (단문 리듬 보존을 위한 하한)
+    
+    Returns:
+        분할된 단락 리스트 (1개 또는 그 이상)
+    """
+    text = text.strip()
+    if not text:
+        return [text]
+    
+    char_len = len(text)
+    sentences = _split_sentences(text)
+    sent_count = len(sentences)
+    
+    # 분단 조건 — AI 시적 의도(짧은 단문 리듬) 보존을 위해 자수 하한 추가
+    triggered_by_length = char_len >= _ACTION_SPLIT_CHAR_THRESHOLD
+    triggered_by_sentence = (char_len >= 100 and sent_count >= _ACTION_SPLIT_SENTENCE_THRESHOLD)
+    
+    if not (triggered_by_length or triggered_by_sentence):
+        return [text]
+    
+    # 분단 시도
+    split_idx = _detect_paragraph_break_index(sentences)
+    
+    # 분단 지점을 못 찾았는데 하드 임계도 안 넘으면 그대로 두기 (보수적)
+    if split_idx < 0:
+        if char_len < _ACTION_SPLIT_HARD_CHARS and sent_count < _ACTION_SPLIT_HARD_SENTENCES:
+            return [text]
+        # 하드 임계 초과면 강제로 중간 분할
+        split_idx = sent_count // 2
+    
+    part1 = ' '.join(sentences[:split_idx])
+    part2 = ' '.join(sentences[split_idx:])
+    
+    # 재귀적으로 part2도 검사 (긴 단락이 3분할 필요한 경우)
+    result = [part1] + _split_action_paragraph(part2)
+    return result
+
+
+# ═══════════════════════════════════════════════════════════
+
+
+
 # ─────────────────────────────────────
 # Page Config
 # ─────────────────────────────────────
@@ -424,27 +572,68 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
 
     def add_dialogue(char_name, parenthetical, line, continuation=False):
         """대사 — '대사'/'대사연속' 스타일 적용.
-        continuation=True이면 캐릭터명 생략."""
+        continuation=True이면 캐릭터명 생략.
+        
+        ★ v3.1.3 — 대사 본문 내 괄호 지시문(예: "(앞치마를 내리며)")은
+        run을 분할하여 bold를 해제. 화자 표기의 괄호(예: "(V.O.)")는 유지.
+        """
         if continuation:
             p = doc.add_paragraph(style='대사연속')
-            paren = f"({parenthetical}) " if parenthetical else ""
-            full = f"\t\t{paren}{line}"
+            speaker_part = "\t\t"
         else:
             p = doc.add_paragraph(style='대사')
-            paren = f"({parenthetical}) " if parenthetical else ""
-            full = f"{char_name}\t\t{paren}{line}"
-        r = p.add_run(full)
-        r.font.name = "함초롬바탕"
-        _set_eastasia_font(r._element.get_or_add_rPr())
+            speaker_part = f"{char_name}\t\t"
+
+        # 대사 본문 영역 조립: parenthetical 인자 + 실제 대사
+        body_parts = []  # [(text, is_paren), ...] — is_paren=True면 bold 해제
+        if parenthetical:
+            body_parts.append((f"({parenthetical}) ", True))
+        if line:
+            # line 자체에도 인라인 괄호가 있을 수 있음 (예: "알겠어. (잠깐) 그치만")
+            # 정규식으로 (...) 부분과 그 외 부분을 분리
+            import re as _re
+            chunks = _re.split(r'(\([^()]*\))', line)
+            for chunk in chunks:
+                if not chunk:
+                    continue
+                if chunk.startswith('(') and chunk.endswith(')'):
+                    body_parts.append((chunk, True))
+                else:
+                    body_parts.append((chunk, False))
+
+        # run 1: 화자 영역 (화자명 + 탭 또는 탭만) — 스타일의 bold 그대로 유지
+        r_speaker = p.add_run(speaker_part)
+        r_speaker.font.name = "함초롬바탕"
+        _set_eastasia_font(r_speaker._element.get_or_add_rPr())
+
+        # run 2~N: 대사 본문 — 괄호 부분은 bold=False 명시
+        for text, is_paren in body_parts:
+            r = p.add_run(text)
+            r.font.name = "함초롬바탕"
+            _set_eastasia_font(r._element.get_or_add_rPr())
+            if is_paren:
+                r.bold = False  # 괄호 지시문은 bold 해제
+
         return p
 
     def add_action(text):
-        """지문 — '지문' 스타일 적용."""
-        p = doc.add_paragraph(style='지문')
-        r = p.add_run(text)
-        r.font.name = "함초롬바탕"
-        _set_eastasia_font(r._element.get_or_add_rPr())
-        return p
+        """지문 — '지문' 스타일 적용.
+        
+        ★ v3.1.3 — 긴 단락은 의미 비트 단위로 자동 분단.
+        AI 시적 의도 보존을 위해 짧은 단락(150자 미만, 7문장 미만)은 그대로 둠.
+        """
+        # 자동 분단 시도
+        sub_paragraphs = _split_action_paragraph(text)
+        
+        first_p = None
+        for sub in sub_paragraphs:
+            p = doc.add_paragraph(style='지문')
+            r = p.add_run(sub)
+            r.font.name = "함초롬바탕"
+            _set_eastasia_font(r._element.get_or_add_rPr())
+            if first_p is None:
+                first_p = p
+        return first_p
 
     # ── 커버 페이지 ──
     for _ in range(6):
