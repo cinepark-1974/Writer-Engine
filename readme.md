@@ -1,4 +1,4 @@
-# 👖 BLUE JEANS Writer Engine v3.1.5
+# 👖 BLUE JEANS Writer Engine v3.2.1
 
 > **AI 시나리오 집필 엔진** — Creator Engine v2.4.0+ 산출물 → 100씬 영화 시나리오 자동 생성
 > BLUE JEANS PICTURES · [cinepark-1974](https://github.com/cinepark-1974)
@@ -7,9 +7,30 @@
 
 ## 한 줄 요약
 
-**19회 클릭으로 100씬 영화 시나리오를 쓰는 엔진.** 장르 드라이브 5점 + BJND 씬 강제 + 창작자 감성 3요소 + 엔딩 동적 분기 + 서브장르 OVERRIDE 3종 + Profession Pack 재주입 + Period Pack 10시대 자동 감지 + 대사 괄호 bold 해제 + 지문 자동 분단 + INSERT 시스템 11종 표기 + **PROP CONTINUITY 소품 연속성 추적**으로 **"장르 맛 + 작가의 서명 + 관객 신체 반응 + 직업 디테일 + 시대 고증 + 출판 가독성 + 물리 일관성"**을 모두 갖춘 시나리오를 생산한다.
+**19회 클릭으로 100씬 영화 시나리오를 쓰는 엔진.** 장르 드라이브 5점 + BJND 씬 강제 + 창작자 감성 3요소 + 엔딩 동적 분기 + 서브장르 OVERRIDE 3종 + Profession Pack 19직업 + Period Pack 10시대 + 대사 괄호 bold 해제 + 지문 자동 분단 + INSERT 시스템 11종 + PROP CONTINUITY 소품 추적 + **GENRE BOOSTER 12종 + HELPER CHARACTER RULE**로 **"장르 맛 + 작가의 서명 + 관객 신체 반응 + 직업 디테일 + 시대 고증 + 출판 가독성 + 물리 일관성 + 12개 장르 코어 DNA + 조력자 자립성"**을 모두 갖춘 시나리오를 생산한다.
 
 ---
+
+## v3.2.1 주요 변경 (← v3.2.0)
+
+| 신규 기능 | 설명 |
+|----------|------|
+| **GENRE BOOSTER 7종 추가** | COMEDY (단독) / MYSTERY (추리) / FANTASY / SF / PERIOD (사극) / COMING_OF_AGE (청춘·성장) / DISASTER (재난). 총 5종 → 12종. |
+| **신규 판별 함수 5종** | `_is_comedy_only()` / `_is_mystery()` / `_is_period()` / `_is_coming_of_age()` / `_is_disaster()`. SF·판타지는 기존 함수 활용. |
+| **부스터 자동 선택 우선순위 재구성** | 12개 부스터 우선순위 정립. 결합 장르(예: "사극 액션")에서 어느 부스터가 우선되는지 명확. |
+| **PERIOD 부스터 + Period Pack 역할 분리** | Period Pack = 시대 디테일 (복식·관직·통화·언어결) / PERIOD 부스터 = 사극 비트 코어 DNA (권력 위계·의례·역사 사건과의 연결). 두 모듈이 함께 작동해야 사극이 "고증만 맞고 재미없는" 함정에서 벗어남. |
+| **단독 코미디 분기** | 코미디가 ROMCOM/HORROR/THRILLER/ACTION과 결합 안 된 경우 COMEDY 부스터로 분기. 〈극한직업〉·〈조선명탐정〉 같은 단독 코미디 지원. |
+
+## v3.2.0 주요 변경 (← v3.1.5)
+
+| 신규 기능 | 설명 |
+|----------|------|
+| **GENRE BOOSTER 5종** | ROMCOM / THRILLER / HORROR / DRAMA / ACTION 장르별 비트 강제 룰. 매 비트 5개 코어 DNA 룰 중 N개 충족 강제. |
+| **HELPER CHARACTER RULE** | 조력자(친구·멘토·동료) 캐릭터 자립성 5원칙. "사건 없이 캐묻기만 반복하는 다은 같은 캐릭터" 차단. |
+| **GENRE_BOOSTER_CHECK 자가 검증 게이트** | 비트 종료 시 INTERNAL 메모로 부스터 룰 충족 여부 자가 점검. 미달 시 재집필 권고. |
+| **`_is_romcom()` 신규 판별** | 코미디+로맨스 결합 자동 감지. ROMCOM 부스터 우선 적용. |
+| **메모 자동 제거** | `<GENRE_BOOSTER_CHECK>`/`<HELPER_CHARACTER_CHECK>` 태그는 INTERNAL이라 본문에 노출 안 됨. |
+| **테이스티 러브 회귀 검증 가능** | ROMCOM 부스터로 다은 캐묻기 빈도 / 코믹 폭발 부족 / 비트별 검증 자동 출력. |
 
 ## v3.1.5 주요 변경 (← v3.1.4)
 
@@ -222,14 +243,16 @@ Creator Engine v2.4.0  →  Writer Engine v3.1.2  →  Rewrite Engine
 | v3.0 | 2026-03-28 | 장르 드라이브 5점, 빌런 승률, Planting & Payoff, 9장르, 듀얼 모델. |
 | v3.1.0 | 2026-04-23 | Creator Engine v2.3 동기화. JSON 자동 로더, BJND Scene Enforcer, 감성 3요소, 엔딩 동적 분기. |
 | v3.1.1 | 2026-04-23 | Creator Engine v2.3.10 동기화. 서브장르 OVERRIDE 3종, Profession Pack 19카테고리 재주입. |
-| v3.1.2 | 2026-04-23 | Creator Engine v2.4.0 동기화. Period Pack 10시대 자동 감지·재주입. 시대 디테일 휘발 방지. |
+| v3.1.2 | 2026-04-23 | Creator Engine v2.4.0 동기화. Period Pack 10시대 자동 감지·재주입. |
 | v3.1.3 | 2026-04-26 | DOCX 출판 가독성 강화. 대사 괄호 bold 해제 + 지문 자동 분단. |
 | v3.1.4 | 2026-04-26 | INSERT 시스템 신설. 화면 텍스트 11종 표준 표기 + DOCX 시각 분리. |
-| **v3.1.5** | **2026-04-26** | **PROP CONTINUITY TRACKER. 매 씬 끝 소품 위치/상태 INTERNAL 메모 강제. 물리 모순 사전 차단.** |
+| v3.1.5 | 2026-04-26 | PROP CONTINUITY TRACKER. 매 씬 끝 소품 위치/상태 INTERNAL 메모 강제. |
+| v3.2.0 | 2026-04-26 | GENRE BOOSTER 5종 (ROMCOM/THRILLER/HORROR/DRAMA/ACTION) + HELPER CHARACTER RULE + 자가 검증 게이트. |
+| **v3.2.1** | **2026-04-26** | **GENRE BOOSTER 7종 추가 (COMEDY/MYSTERY/FANTASY/SF/PERIOD/COMING_OF_AGE/DISASTER). 총 12종 부스터.** |
 
 ---
 
-## v3.1.5의 철학
+## v3.2.1의 철학
 
 - **v3.0**: 장르적으로 재미있고 서사적으로 관통하는 시나리오
 - **v3.1.0**: v3.0 + 작가의 서명이 남고 관객의 몸이 반응하는 시나리오
@@ -238,6 +261,102 @@ Creator Engine v2.4.0  →  Writer Engine v3.1.2  →  Rewrite Engine
 - **v3.1.3**: v3.1.2 + 인쇄·검토 단계에서 "굵게 나올 게 굵고, 가는 게 가는" 출판 가독성 시나리오
 - **v3.1.4**: v3.1.3 + 화면 안 텍스트(카톡·문자·유튜브·뉴스)가 일반 지문에 묻히지 않고 *영화처럼 보이는* 시나리오
 - **v3.1.5**: v3.1.4 + "가방에 넣고 떠난 노트가 다음 씬 테이블 위에 다시 놓이지 않는" *물리 일관성* 시나리오
+- **v3.2.0**: v3.1.5 + "로코는 매 비트 폭소가 터지고, 스릴러는 매 비트 시계가 째깍거리고, 호러는 매 비트 안전지대가 무너지는" *5개 장르 코어 DNA*가 매 비트마다 작동하는 시나리오
+- **v3.2.1**: v3.2.0 + "추리물은 매 비트 단서가 깔리고, 사극은 매 비트 권력 위계가 보이고, 청춘물은 매 비트 첫 경험이 무겁고, 재난물은 매 비트 시한이 짧아지는" *12개 장르 코어 DNA가 모두 작동*하는 시나리오
+
+---
+
+## GENRE BOOSTER 12종 (v3.2.1)
+
+장르 자동 판별 → 해당 부스터 모듈 비트 집필에 강제 주입.
+매 비트 종료 시 자가 검증 메모(`<GENRE_BOOSTER_CHECK>`)로 룰 충족 여부 자가 점검.
+
+### 부스터 우선순위 (결합 장르에서 어느 게 우선되는가)
+
+```
+ROMCOM > PERIOD > DISASTER > MYSTERY > HORROR > THRILLER >
+SF > FANTASY > ACTION > COMING_OF_AGE > COMEDY > DRAMA
+```
+
+원칙: **세계관 룰이 강한 장르가 우선** (사극·재난·SF·판타지는 다른 장르와 결합되어도 그쪽 우선).
+
+### 부스터별 코어 DNA 5종
+
+| 장르 | 5개 룰 | 필수 충족 |
+|---|---|---|
+| **ROMCOM** | 코믹 곤혹 / Misdirection / Comic Specificity / Status Flip / Topper | 5 중 2개 |
+| **COMEDY** | 슬랩스틱 / 캐릭터 결함 / Comic Specificity / Status Flip / Topper | 5 중 2개 |
+| **THRILLER** | 정보 비대칭 / 타이머 가시화 / Setpiece 긴장 / Reveal·Twist / 위협 가시화 | 5 중 3개 |
+| **HORROR** | 일상의 균열 / Mystery Box / 신체 불편함 / 안전지대 침범 / 침묵 사용 | 5 중 3개 |
+| **DRAMA** | 침묵 비트 / 일상 디테일 / 결정의 순간 / 관계 변화 / 행동 통한 감정 | 5 중 3개 |
+| **ACTION** | Setpiece 액션 / 물리적 위협 / 환경 활용 / 능력 표현 / 소진과 회복 | 5 중 3개 |
+| **MYSTERY** | 단서 배치 / 가짜 단서 / 추리 절차 / Reveal 단계화 / 탐정의 결함 | 5 중 3개 |
+| **FANTASY** | 룰북 일관성 / 마법의 대가 / 일상↔비일상 / 상징 시각화 / 변신·각성 | 5 중 3개 |
+| **SF** | 기술 룰북 / 인간성 질문 / 기술의 그림자 / 미래 디테일 / 윤리 딜레마 | 5 중 3개 |
+| **PERIOD** | 권력 위계 / 의례·관습 / 시대 어투 / 사건 연결 / 의상·공간 | 5 중 3개 |
+| **COMING_OF_AGE** | 첫 경험 / 어른 흉내 / 자기 부정 / 또래의 거울 / 작은 결단 | 5 중 3개 |
+| **DISASTER** | 일상의 균열 / 첫 희생자 / 시한 가시화 / 인간 본성 / 구조의 한계 | 5 중 3개 |
+
+### Profession Pack + Period Pack과의 역할 분리
+
+| 모듈 | 담당 영역 |
+|---|---|
+| **Profession Pack** (19직업) | 직업 디테일 — 검사·의사·기자·요리사 등의 *사용 도구·공간·언어* |
+| **Period Pack** (10시대) | 시대 디테일 — 조선~현대의 *복식·관직·통화·언어결·교통* |
+| **GENRE BOOSTER** (12장르) | 장르 코어 DNA — 매 비트의 *드라마 작동 방식* |
+
+세 모듈이 동시 작동해야 시나리오가 "직업 디테일 살아 있고 / 시대 고증 맞고 / 장르 재미가 매 비트 작동하는" 상태가 된다.
+
+### 자가 검증 게이트
+
+비트 종료 시 AI가 작성하는 INTERNAL 메모:
+
+```
+<GENRE_BOOSTER_CHECK>
+  □ 룰 1: [코믹 곤혹 상황] — 충족 (다은이 화환을 콕 찌름)
+  □ 룰 2: [Misdirection] — 미충족
+  □ 룰 3: [Comic Specificity] — 충족 (시든 화환 디테일)
+  □ 룰 4: [Status Flip] — 미충족
+  □ 룰 5: [Topper] — 충족 (다은의 한 마디)
+  
+  충족 개수: 3개 / 5개
+  필수 충족 개수: 2개 (ROMCOM)
+</GENRE_BOOSTER_CHECK>
+```
+
+이 메모는 INTERNAL이며 main.py가 DOCX 빌드 시 자동 제거. 최종 시나리오에는 노출되지 않는다.
+
+---
+
+## HELPER CHARACTER RULE — 조력자 자립성 5원칙 (모든 장르 공통)
+
+조력자(친구·멘토·동료·라이벌·룸메이트) 캐릭터가 단순 반응형 캐릭터가 되지 않도록 강제.
+
+1. **자기 사건 의무화** — 조력자도 자기만의 욕망/문제/대가를 가진다
+2. **캐묻기의 조건** — 조력자가 주인공에게 캐묻는 씬은 직전에 본선 사건이 누적되어 있을 때만 허용
+3. **등장 빈도 검증** — 전체 씬의 25% 초과 = 과다 / 5씬 연속 등장 = 비효율
+4. **능동적 행동 의무** — 단순 조언자/반응자가 아닌 행동/선택/시도를 보여줌
+5. **거울 효과** — 조력자의 사건이 주인공의 결함을 비추는 거울로 작동
+
+### 자가 검증 (조력자 등장 비트만)
+
+```
+<HELPER_CHARACTER_CHECK>
+  □ 조력자 등장? (Y/N)
+  □ 등장 시: 직전 본선 사건 충분? (Y/N)
+  □ 조력자 자기 행동/선택? (Y/N)
+  □ 거울 효과? (Y/N)
+  □ 분량 적정? (Y/N)
+</HELPER_CHARACTER_CHECK>
+```
+
+### 모범 사례
+
+- ✅ 〈써니〉의 7명 친구들 — 각자의 사건이 있고 거울이 됨
+- ✅ 〈건축학개론〉의 납득이 — 코믹 위안 + 거울 + 자기 사건
+- ✅ 〈싱글즈〉의 동미 — 자기 결혼 위기가 주인공 결함의 거울
+
+---
 
 ---
 
