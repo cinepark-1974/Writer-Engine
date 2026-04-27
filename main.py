@@ -265,6 +265,28 @@ def _strip_prop_state_memos(text: str) -> str:
     )
     text = pattern_internal.sub('\n', text)
     
+    # ★ v3.2.0 — GENRE_BOOSTER_CHECK 태그 제거
+    # AI가 비트 끝에 작성하는 자가 검증 메모도 본문 노출 금지.
+    pattern_booster = _re_prop.compile(
+        r'\n*<GENRE_BOOSTER_CHECK>[\s\S]*?</GENRE_BOOSTER_CHECK>\n*',
+        _re_prop.IGNORECASE
+    )
+    text = pattern_booster.sub('\n', text)
+    
+    # ★ v3.2.0 — HELPER_CHARACTER_CHECK 태그 제거
+    pattern_helper = _re_prop.compile(
+        r'\n*<HELPER_CHARACTER_CHECK>[\s\S]*?</HELPER_CHARACTER_CHECK>\n*',
+        _re_prop.IGNORECASE
+    )
+    text = pattern_helper.sub('\n', text)
+    
+    # ★ v3.2.0 — 닫기 태그 없이 떠도는 자가 검증 헤더 (안전망)
+    pattern_check_header = _re_prop.compile(
+        r'\n*\[★?\s*비트\s*종료[^\]]*GENRE_BOOSTER_CHECK[^\]]*\][\s\S]*?(?=\n\[|\nS#|\n$|\Z)',
+        _re_prop.IGNORECASE
+    )
+    text = pattern_check_header.sub('\n', text)
+    
     # 연속된 빈 줄 정리 (3개 이상 → 2개)
     text = _re_prop.sub(r'\n{3,}', '\n\n', text)
     
