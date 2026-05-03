@@ -1,7 +1,15 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v3.3.0
+# BLUE JEANS SCREENPLAY WRITER ENGINE v3.4.0
 # prompt.py — Full Version (Creator Engine v2.4.0 동기화)
 # © 2026 BLUE JEANS PICTURES
+#
+# v3.4.0 주요 변경사항 (2026-05-03):
+# - 프로젝트 세션 백업 기능 신설 (main.py)
+#   * STEP 1 입력 + STEP 1 설정 + STEP 2 결과 + STEP 3 결과 전체 JSON 저장/복원
+#   * 비트 집필 중단 시 처음부터 다시 시작할 필요 없음
+#   * 파일명 자동 생성: WriterEngine_제목_N of 15_YYYYMMDD_HHMM.json
+#   * 버전 호환성 체크 + 다른 버전 백업 복원 시 경고
+# - prompt.py 본체 변경 없음 (워크플로우 보강)
 #
 # v3.3.0 주요 변경사항 (2026-05-03):
 # - HOLLYWOOD CRAFT 4대 원칙 신설 (A21~A24) — 지문의 본질
@@ -76,7 +84,7 @@
 # - Creator JSON 자동 로더
 # ─────────────────────────────────────────────────────────────
 
-ENGINE_VERSION = "v3.3.0"
+ENGINE_VERSION = "v3.4.0"
 ENGINE_BUILD_DATE = "2026-05-03"
 
 

@@ -692,6 +692,78 @@ def full_plan() -> str:
 def plan_ready() -> bool:
     return all(st.session_state.get(f"plan_{a}", "").strip() for a in ["1막", "2막", "3막"])
 
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.4.0 — 프로젝트 세션 백업 (저장/불러오기)
+# 중간에 멈춰도 처음부터 다시 안 해도 되게.
+# ═══════════════════════════════════════════════════════════
+
+# 백업 대상 키 — STEP 1 입력 + STEP 1 설정 + STEP 2 결과 + STEP 3 결과
+_BACKUP_KEYS = [
+    # STEP 1 입력 (FIELDS 14개)
+    "title", "logline", "intent", "gns", "characters", "opening_strategy",
+    "world", "structure", "scene_design", "treatment", "tone",
+    "bjnd_data", "ending_payoff", "ending_payoff_type",
+    # STEP 1 설정
+    "genre", "fmt", "fact_based", "historical", "historical_type",
+    # STEP 2 결과
+    "plan_1막", "plan_2막", "plan_3막", "story_elements",
+    # STEP 3 결과
+    "beats_done", "current_beat",
+]
+
+
+def export_session_backup() -> bytes:
+    """현재 세션 상태를 JSON bytes로 직렬화."""
+    payload = {
+        "_meta": {
+            "engine_version": ENGINE_VERSION,
+            "build_date": ENGINE_BUILD_DATE,
+            "saved_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+            "title": st.session_state.get("title", ""),
+            "genre": st.session_state.get("genre", ""),
+            "beats_progress": f"{len(st.session_state.get('beats_done', {}))}/15",
+        },
+        "session": {k: st.session_state.get(k) for k in _BACKUP_KEYS},
+    }
+    # beats_done의 키는 int인데 JSON은 str로만 직렬화 가능 → 명시 변환
+    beats_done = payload["session"].get("beats_done", {})
+    if isinstance(beats_done, dict):
+        payload["session"]["beats_done"] = {str(k): v for k, v in beats_done.items()}
+    return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+
+
+def import_session_backup(raw_bytes: bytes) -> dict:
+    """JSON bytes를 받아 세션에 복원. 복원된 메타 정보 dict 반환."""
+    raw = raw_bytes.decode("utf-8")
+    data = json.loads(raw)
+    
+    session_data = data.get("session", {})
+    meta = data.get("_meta", {})
+    
+    # 세션 상태에 복원
+    for k in _BACKUP_KEYS:
+        if k in session_data:
+            v = session_data[k]
+            # beats_done 키를 다시 int로 (JSON에서 str로 저장됨)
+            if k == "beats_done" and isinstance(v, dict):
+                v = {int(kk): vv for kk, vv in v.items()}
+            st.session_state[k] = v
+    
+    return meta
+
+
+def make_backup_filename(title: str, beats_count: int) -> str:
+    """백업 파일명 생성 — 제목/진행도/시각 포함."""
+    base = (title or "Untitled").strip()[:30]
+    # 파일명 안전 처리 (윈도우/맥 공통)
+    for ch in '<>:"/\\|?*':
+        base = base.replace(ch, "_")
+    base = base.replace(" ", "_")
+    ts = datetime.now().strftime("%Y%m%d_%H%M")
+    return f"WriterEngine_{base}_{beats_count}of15_{ts}.json"
+
+
 def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
                     fact_based: bool = False,
                     historical: bool = False,
@@ -1506,6 +1578,80 @@ with st.expander("⚡ Creator Engine JSON 업로드 (자동 채우기)", expande
             st.error(f"JSON 파싱 실패: {e}")
         except Exception as e:
             st.error(f"로드 중 오류: {e}")
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.4.0 신규 — 프로젝트 세션 백업 (저장/불러오기)
+# 중간에 멈춰도 처음부터 다시 안 해도 되게.
+# ═══════════════════════════════════════════════════════════
+with st.expander("💾 프로젝트 세션 백업 (중단 시 복구용)", expanded=False):
+    st.markdown(
+        '<div class="small-meta">현재 작업 중인 모든 입력칸·씬 플랜·집필된 비트를 JSON으로 저장하거나 불러옵니다. '
+        '비트 집필 도중 멈추거나 다음 날 이어서 작업할 때 사용하세요.</div>',
+        unsafe_allow_html=True,
+    )
+    
+    col_b1, col_b2 = st.columns(2)
+    
+    # ── 저장 ──
+    with col_b1:
+        st.markdown("**📥 백업 저장**")
+        _backup_title = st.session_state.get("title", "") or "Untitled"
+        _backup_count = len(st.session_state.get("beats_done", {}))
+        _backup_bytes = export_session_backup()
+        _backup_fname = make_backup_filename(_backup_title, _backup_count)
+        st.download_button(
+            label=f"💾 JSON 다운로드 ({_backup_count}/15 비트)",
+            data=_backup_bytes,
+            file_name=_backup_fname,
+            mime="application/json",
+            use_container_width=True,
+            key="backup_download_btn",
+        )
+        st.caption(f"파일명: `{_backup_fname}`")
+    
+    # ── 불러오기 ──
+    with col_b2:
+        st.markdown("**📤 백업 불러오기**")
+        backup_file = st.file_uploader(
+            "백업 JSON 파일", type=["json"],
+            key="backup_uploader",
+            label_visibility="collapsed",
+        )
+        load_backup_btn = st.button(
+            "📂 백업 적용 (현재 작업 덮어쓰기)",
+            use_container_width=True,
+            disabled=(backup_file is None),
+            key="backup_load_btn",
+        )
+        
+        if load_backup_btn and backup_file is not None:
+            try:
+                meta = import_session_backup(backup_file.read())
+                
+                saved_ver = meta.get("engine_version", "?")
+                saved_at = meta.get("saved_at", "?")
+                progress = meta.get("beats_progress", "?")
+                title = meta.get("title", "(무제)")
+                
+                # 버전 호환성 안내
+                if saved_ver != ENGINE_VERSION:
+                    st.warning(
+                        f"⚠️ 백업 버전({saved_ver})이 현재 엔진({ENGINE_VERSION})과 다릅니다. "
+                        f"복원은 시도되었으나 일부 신규 기능은 반영되지 않을 수 있습니다."
+                    )
+                
+                st.success(
+                    f"✅ 백업 복원 완료\n\n"
+                    f"**프로젝트**: {title}\n\n"
+                    f"**저장 시각**: {saved_at}\n\n"
+                    f"**엔진 버전**: {saved_ver}\n\n"
+                    f"**진행도**: {progress} 비트"
+                )
+                st.rerun()
+            except json.JSONDecodeError as e:
+                st.error(f"JSON 파싱 실패: {e}")
+            except Exception as e:
+                st.error(f"복원 중 오류: {e}")
 
 col_g1, col_g2 = st.columns(2)
 with col_g1:
