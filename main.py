@@ -764,6 +764,70 @@ def make_backup_filename(title: str, beats_count: int) -> str:
     return f"WriterEngine_{base}_{beats_count}of15_{ts}.json"
 
 
+# ═══════════════════════════════════════════════════════════
+# ★ v3.5.1 — 한국 시나리오 표준 포맷 후처리
+# 지문↔대사 사이에 빈 줄을 자동 삽입한다.
+# AI가 prompt.py 지시를 따라 빈 줄을 넣어 출력하는 것이 1차 안전망이고,
+# 이 함수는 누락 시 보완하는 2차 안전망이다.
+# ═══════════════════════════════════════════════════════════
+
+def _normalize_screenplay_blank_lines(text: str) -> str:
+    """시나리오 본문에서 지문↔대사 사이 빈 줄을 보정한다.
+    
+    규칙:
+    - 지문 다음 줄이 대사면 사이에 빈 줄 1개
+    - 대사 다음 줄이 지문이면 사이에 빈 줄 1개
+    - 같은 화자/다른 화자 대사 연속은 빈 줄 없이 유지
+    - 씬 헤딩 직전/직후는 기존 빈 줄 처리 유지
+    - 이미 빈 줄이 있으면 추가 삽입 안 함 (중복 방지)
+    """
+    import re
+    
+    # 라인 분류 함수
+    heading_pat = re.compile(r'^S#\d+', re.UNICODE)
+    # 대사 패턴: "캐릭터명\t\t대사" (탭 1~3개 허용)
+    dialogue_pat = re.compile(r'^[^\t]+\t{1,}\S', re.UNICODE)
+    
+    def line_type(line: str) -> str:
+        s = line.rstrip()
+        if not s.strip():
+            return "blank"
+        if heading_pat.match(s.strip()):
+            return "scene"
+        if dialogue_pat.match(s):
+            return "dialogue"
+        return "action"
+    
+    lines = text.split('\n')
+    result = []
+    for idx, line in enumerate(lines):
+        cur_type = line_type(line)
+        # 이전 의미 있는 라인 타입 찾기 (빈 줄 건너뛰기)
+        prev_meaningful = None
+        for r_line in reversed(result):
+            r_type = line_type(r_line)
+            if r_type != "blank":
+                prev_meaningful = r_type
+                break
+        
+        # 직전 줄이 빈 줄인지 (이미 분리된 상태인지)
+        already_separated = bool(result) and not result[-1].strip()
+        
+        # 빈 줄 삽입 결정
+        need_blank = False
+        if prev_meaningful and not already_separated:
+            # 지문 → 대사 또는 대사 → 지문 전환
+            if (prev_meaningful == "action" and cur_type == "dialogue") or \
+               (prev_meaningful == "dialogue" and cur_type == "action"):
+                need_blank = True
+        
+        if need_blank:
+            result.append("")
+        result.append(line)
+    
+    return '\n'.join(result)
+
+
 def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
                     fact_based: bool = False,
                     historical: bool = False,
@@ -960,6 +1024,17 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
             if is_paren:
                 r.bold = False  # 괄호 지시문은 bold 해제
 
+        return p
+
+    def add_blank_line():
+        """★ v3.5.1 — 지문↔대사 사이 빈 줄 (한국 시나리오 표준 포맷).
+        함초롬바탕 10pt로 통일된 빈 단락. 워드/한글 모두 일관된 높이."""
+        p = doc.add_paragraph(style='지문')
+        # 빈 run으로 폰트만 지정 (텍스트 없음)
+        r = p.add_run("")
+        r.font.name = "함초롬바탕"
+        r.font.size = Pt(10)
+        _set_eastasia_font(r._element.get_or_add_rPr())
         return p
 
     def add_action(text):
@@ -1304,6 +1379,9 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
         lines = _fixed_lines
 
         i = 0
+        # ★ v3.5.1 — 지문↔대사 사이 빈 줄 자동 삽입을 위한 직전 블록 타입 추적
+        # 가능한 값: None, "scene", "action", "dialogue", "insert"
+        prev_block_type = None
         while i < len(lines):
             line = lines[i]
             stripped = line.strip()
@@ -1390,6 +1468,7 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
             if m:
                 # S#번호 포함 전체 텍스트 사용
                 add_scene_heading(stripped)
+                prev_block_type = "scene"  # ★ v3.5.1
                 i += 1
                 continue
 
@@ -1403,7 +1482,11 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
                 # V.O./O.S.를 캐릭터명에 포함
                 if vo_marker:
                     char_name = f"{char_name} ({vo_marker})"
+                # ★ v3.5.1 — 지문/insert 직후 대사면 빈 줄 1개 삽입
+                if prev_block_type in ("action", "insert"):
+                    add_blank_line()
                 add_dialogue(char_name, inline_paren, inline_text)
+                prev_block_type = "dialogue"
                 i += 1
                 continue
 
@@ -1416,6 +1499,9 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
                     char_name = f"{char_name} ({vo_marker})"
                 parenthetical = ""
                 dialogue_lines = []
+                # ★ v3.5.1 — 지문/insert 직후 대사면 빈 줄 1개 삽입
+                if prev_block_type in ("action", "insert"):
+                    add_blank_line()
                 i += 1
 
                 # 괄호 지시 확인
@@ -1474,7 +1560,10 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
                                 add_dialogue(char_name, "", part_text, continuation=True)
                         else:
                             # 행동 지시는 지문으로 표시 (대사 사이에 끼워 넣기)
+                            # ★ v3.5.1 — 대사 직후 행동 지시면 빈 줄 1개 삽입
+                            add_blank_line()
                             add_action(part_text)
+                            add_blank_line()  # 행동 지시 다음 다시 대사가 오므로 빈 줄
                             # 행동 지시 뒤 대사는 다시 캐릭터명 표시
                             first = True
                     # 처음부터 모두 행동 지시만 있던 경우 fallback
@@ -1482,10 +1571,15 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
                         add_dialogue(char_name, parenthetical, "")
                 else:
                     add_dialogue(char_name, parenthetical, "")
+                prev_block_type = "dialogue"  # ★ v3.5.1
                 continue
 
             # 그 외 = 지문
+            # ★ v3.5.1 — 대사 직후 지문이면 빈 줄 1개 삽입
+            if prev_block_type == "dialogue":
+                add_blank_line()
             add_action(stripped)
+            prev_block_type = "action"
             i += 1
 
     # ── 푸터 ──
@@ -2110,9 +2204,13 @@ if st.session_state.get("beats_done"):
     parts = []
     for b_no in sorted(st.session_state["beats_done"].keys()):
         b_info = BEATS_15[b_no - 1]
+        # ★ v3.5.1 — 지문↔대사 빈 줄 후처리 적용
+        beat_text = _normalize_screenplay_blank_lines(
+            st.session_state['beats_done'][b_no]
+        )
         parts.append(
             f"{'='*60}\n{b_info['act']} — Beat {b_no}. {b_info['name']}\n{'='*60}\n\n"
-            f"{st.session_state['beats_done'][b_no]}"
+            f"{beat_text}"
         )
     all_text = "\n\n\n".join(parts)
 
