@@ -1,7 +1,62 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v3.5.2
-# prompt.py — Full Version (Creator Engine v2.4.0 동기화)
+# BLUE JEANS SCREENPLAY WRITER ENGINE v3.6.0
+# prompt.py — Full Version (Creator Engine v2.5.5 동기화)
 # © 2026 BLUE JEANS PICTURES
+#
+# v3.6.0 주요 변경사항 (2026-05-14):
+# - Creator Engine v2.5.5 "장르 본질 3중 선언" 수신·활용 로직 신설
+#   * Mr. MOON 진단: "엔진의 장르 OVERRIDE가 엉망으로 설계되어 있다.
+#     Creator Engine이 장르 본질을 인식 못 하면,
+#     Writer Engine은 그 본질을 시나리오에 못 옮긴다."
+#   * Creator v2.5.5에서 10개 장르 본질 정의 완료 (절대 목표 + Fun + 3요소)
+#   * Writer v3.6.0에서 이를 수신해 매 비트 system prompt에 주입
+#
+# - extract_genre_essence() 함수 신설 (3단계 fallback)
+#   * 1순위: Creator JSON의 genre.absolute_goal / fun_engine / emotion_triggers
+#   * 2순위: Creator JSON의 genre.primary로 내부 룩업 테이블 매칭
+#   * 3순위: 사용자가 STEP 1에서 지정한 genre로 fallback 룩업
+#   * 4순위: 모두 실패 시 빈 dict — Writer는 기존 v3.5.2 방식으로 작동
+#
+# - GENRE_ESSENCE_TABLE 내장 룩업 테이블 (13개 장르)
+#   드라마/로맨스/멜로/로맨틱 코미디/스릴러/범죄+스릴러/액션/코미디/호러/
+#   조폭/느와르/마약/사기
+#
+# - build_genre_essence_injection() — system prompt 주입 텍스트 빌더
+#   비트 집필 호출의 [장르] 블록 직전에 본질 3중 선언을 명시 주입.
+#   AI가 매 문단마다 절대 목표를 자문하도록 강제.
+#
+# - 비트 종료 시 GENRE_ESSENCE_CHECK 자가 검증 게이트 추가 (Phase 2)
+#   <GENRE_ESSENCE_CHECK> INTERNAL 메모로 자가 점검:
+#     · 절대 목표 정합성 (YES/NO + 근거)
+#     · Fun 작동 (YES/NO + 근거)
+#     · 3요소 작동 (작동 요소 명시, 최소 1개)
+#     · 장르 정합성 테스트 (다른 장르로 옮겨도 성립하는가)
+#   main.py _strip_prop_state_memos()가 본문에서 자동 제거.
+#
+# - build_write_beat_prompt() 시그니처에 genre_essence 파라미터 추가
+#   기존 14개 파라미터 + genre_essence 1개 신규
+#
+# - main.py 변경:
+#   * Creator JSON 로드 시 essence 함께 추출 → session_state["genre_essence"]
+#   * Creator JSON 로드 알림에 본질 선언 표시
+#   * 비트 집필 호출에 essence 전달
+#   * 사이드바에 현재 적용 장르 본질 표시 패널 (노란색 카드)
+#   * _BACKUP_KEYS에 genre_essence 추가 (백업/복원 지원)
+#
+# - 호환성: 100% 하위 호환
+#   * Creator v2.5.5 미만 JSON → 룩업 테이블로 자동 보충
+#   * Creator JSON 없이 사용자가 직접 입력 → genre로 룩업
+#   * 모든 경로 실패 → 본질 선언 미적용 (v3.5.2 동작 유지)
+#
+# - 예상 효과 (Phase 1+2 적용 시):
+#   * 1차 시도 장르 정합성: 약 70% → 90%+
+#   * Rewrite "장르적 재미 부재" 진단: 자주 발생 → 거의 없음
+#   * 호러 작품 본질 누락: 막당 1~2회 → 거의 없음
+#   * 다른 장르로 옮겨도 성립하는 씬: 20%+ → 5% 미만
+#
+# - 다음 패치 예고:
+#   * v3.6.1 — 자가 검증 실패 시 자동 재시도 1회 로직
+#   * v3.6.2 — 막 단위 종합 검증
 #
 # v3.5.2 주요 변경사항 (2026-05-04):
 # - A22(한 문장=한 샷) 룰 보강 — 같은 동선의 연속 동작 묶기 강제
@@ -144,8 +199,8 @@
 # - Creator JSON 자동 로더
 # ─────────────────────────────────────────────────────────────
 
-ENGINE_VERSION = "v3.5.2"
-ENGINE_BUILD_DATE = "2026-05-04"
+ENGINE_VERSION = "v3.6.0"
+ENGINE_BUILD_DATE = "2026-05-14"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -383,6 +438,226 @@ Writer는 이 설계를 존중해야 한다.
 """.strip()
     
     return ""
+
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.6.0 NEW MODULE — 장르 본질 3중 선언 시스템
+# Creator Engine v2.5.5와 짝을 이루는 Writer 측 수신·활용 로직.
+# ═══════════════════════════════════════════════════════════
+
+# Creator Engine v2.5.5에서 정의한 10개 장르 본질 정의.
+# Creator JSON에 absolute_goal/fun_engine/emotion_triggers가 없을 때
+# Writer가 genre 값으로 자동 보충하는 fallback 테이블.
+GENRE_ESSENCE_TABLE = {
+    "드라마": {
+        "absolute_goal": "관계의 깊이에서 오는 공감대를 만들어야 한다",
+        "fun_engine": "내면변화",
+        "emotion_triggers": ["억눌림", "균열", "폭발"],
+        "essence_check": "이 씬이 인물 사이의 미세한 감정 변화를 드러내는가? 외부 사건이 아니라 관계의 깊이가 작동하는가?",
+    },
+    "로맨스": {
+        "absolute_goal": "사랑하고 싶게 만들어야 한다",
+        "fun_engine": "관계-거리",
+        "emotion_triggers": ["설렘", "만남", "이별"],
+        "essence_check": "관객이 이 두 사람을 사랑하게 되는가? 거리(가까워짐/멀어짐)가 작동하는가?",
+    },
+    "멜로": {
+        "absolute_goal": "사랑하고 싶게 만들어야 한다",
+        "fun_engine": "관계-거리",
+        "emotion_triggers": ["설렘", "만남", "이별"],
+        "essence_check": "관객이 이 두 사람을 사랑하게 되는가? 거리(가까워짐/멀어짐)가 작동하는가?",
+    },
+    "로맨틱 코미디": {
+        "absolute_goal": "웃기면서 설레게 만들어야 한다",
+        "fun_engine": "이중감정",
+        "emotion_triggers": ["코믹순간", "설렘잔향", "톤전환"],
+        "essence_check": "이 씬에 웃음과 설렘이 동시에 또는 연속해서 작동하는가? 한쪽만 있으면 ROMCOM이 아니다.",
+    },
+    "스릴러": {
+        "absolute_goal": "서스펜스를 유지해야 한다",
+        "fun_engine": "서스펜스",
+        "emotion_triggers": ["범죄", "추적", "폭로"],
+        "essence_check": "이 씬이 다음에 무슨 일이 벌어질지 궁금하게 만드는가? 정보 격차가 긴장을 만드는가?",
+    },
+    "범죄/스릴러": {
+        "absolute_goal": "서스펜스를 유지해야 한다",
+        "fun_engine": "서스펜스",
+        "emotion_triggers": ["범죄", "추적", "폭로"],
+        "essence_check": "이 씬이 다음에 무슨 일이 벌어질지 궁금하게 만드는가? 정보 격차가 긴장을 만드는가?",
+    },
+    "액션": {
+        "absolute_goal": "통쾌함을 느끼게 만들어야 한다",
+        "fun_engine": "카타르시스",
+        "emotion_triggers": ["빌런", "충돌", "승리"],
+        "essence_check": "이 씬에 통쾌한 충돌·승리가 있는가? 빌런의 무게가 느껴지는가?",
+    },
+    "코미디": {
+        "absolute_goal": "웃겨야 한다",
+        "fun_engine": "웃음유발",
+        "emotion_triggers": ["거짓말", "오해", "공감"],
+        "essence_check": "이 씬에 관객이 웃을 지점이 최소 1개 있는가? 거짓말·오해·공감 중 하나가 작동하는가?",
+    },
+    "호러": {
+        "absolute_goal": "무서워야 한다",
+        "fun_engine": "무서움",
+        "emotion_triggers": ["초자연", "괴담", "저주"],
+        "essence_check": "이 씬에 초자연·괴담·저주 중 하나가 작동하는가? 단순 위험·미스터리는 호러가 아니다.",
+    },
+    "조폭": {
+        "absolute_goal": "의리와 배신의 무게를 느끼게 만들어야 한다",
+        "fun_engine": "서열의리",
+        "emotion_triggers": ["서열", "의리", "배신"],
+        "essence_check": "이 씬에 서열·의리·배신 중 하나의 무게가 느껴지는가? 단순 범죄 액션은 조폭영화가 아니다.",
+    },
+    "느와르": {
+        "absolute_goal": "의리와 배신의 무게를 느끼게 만들어야 한다",
+        "fun_engine": "서열의리",
+        "emotion_triggers": ["서열", "의리", "배신"],
+        "essence_check": "이 씬에 서열·의리·배신 중 하나의 무게가 느껴지는가?",
+    },
+    "마약": {
+        "absolute_goal": "욕망과 몰락의 중독성을 느끼게 만들어야 한다",
+        "fun_engine": "중독몰락",
+        "emotion_triggers": ["물건", "루트", "몰락"],
+        "essence_check": "이 씬에 물건·루트·몰락 중 하나가 작동하는가? 단순 범죄 스릴러는 마약영화가 아니다.",
+    },
+    "사기": {
+        "absolute_goal": "관객까지 통쾌하게 속여야 한다",
+        "fun_engine": "사기게임",
+        "emotion_triggers": ["작전", "반전", "정체"],
+        "essence_check": "이 씬에 작전·반전·정체 중 하나가 작동하는가? 관객도 함께 속는 즐거움이 있는가?",
+    },
+}
+
+
+def _normalize_genre_for_essence(genre: str) -> str:
+    """장르 문자열을 본질 테이블 키로 정규화."""
+    if not genre:
+        return ""
+    g = genre.strip()
+    # 직접 일치 우선
+    if g in GENRE_ESSENCE_TABLE:
+        return g
+    # 부분 매칭 (장르 이름 맨 뒤가 본질을 결정 — Writer Engine 룰)
+    # "액션 스릴러" → 스릴러, "로맨틱 코미디" → 로맨틱 코미디(직접 매치)
+    for key in ["로맨틱 코미디", "범죄/스릴러", "조폭", "느와르", "마약", "사기",
+                "호러", "스릴러", "액션", "코미디", "드라마", "로맨스", "멜로"]:
+        if key in g:
+            return key
+    return ""
+
+
+def extract_genre_essence(creator_json: dict, genre_fallback: str = "") -> dict:
+    """
+    Creator JSON에서 장르 본질 3중 선언을 추출한다 (v3.6.0 신규).
+    
+    Priority:
+    1) Creator JSON의 genre.absolute_goal / fun_engine / emotion_triggers
+       (Creator Engine v2.5.5+ 출력)
+    2) Creator JSON의 genre.primary로 내부 룩업
+    3) 사용자가 직접 지정한 genre_fallback으로 내부 룩업
+    4) 모두 실패 시 빈 딕셔너리 (Writer는 기존 v3.5.2 로직으로 fallback)
+    
+    Returns:
+        {
+            "absolute_goal": "...",
+            "fun_engine": "...",
+            "emotion_triggers": [...],
+            "essence_check": "...",
+            "source": "creator_json" | "lookup_primary" | "lookup_fallback" | "none"
+        }
+    """
+    empty = {"absolute_goal": "", "fun_engine": "", "emotion_triggers": [],
+             "essence_check": "", "source": "none"}
+    
+    if not creator_json:
+        # Creator JSON 없으면 fallback genre로만 시도
+        key = _normalize_genre_for_essence(genre_fallback)
+        if key and key in GENRE_ESSENCE_TABLE:
+            essence = dict(GENRE_ESSENCE_TABLE[key])
+            essence["source"] = "lookup_fallback"
+            return essence
+        return empty
+    
+    # 1순위 — Creator JSON에 직접 명시되어 있는가 (v2.5.5+ 표준)
+    genre_meta = creator_json.get("genre", {}) or {}
+    if isinstance(genre_meta, dict):
+        ag = genre_meta.get("absolute_goal", "").strip()
+        fe = genre_meta.get("fun_engine", "").strip()
+        et = genre_meta.get("emotion_triggers", []) or []
+        if ag and fe and et:
+            # Creator가 직접 정의한 본질 사용
+            primary = genre_meta.get("primary", "")
+            key = _normalize_genre_for_essence(primary)
+            essence_check = GENRE_ESSENCE_TABLE.get(key, {}).get(
+                "essence_check", 
+                f"이 씬이 '{ag}'을 향해 가는가? {fe}이 작동하는가?"
+            )
+            return {
+                "absolute_goal": ag,
+                "fun_engine": fe,
+                "emotion_triggers": et if isinstance(et, list) else [et],
+                "essence_check": essence_check,
+                "source": "creator_json",
+            }
+    
+    # 2순위 — Creator JSON의 genre.primary로 룩업
+    primary = ""
+    if isinstance(genre_meta, dict):
+        primary = genre_meta.get("primary", "")
+    if not primary:
+        # project.core.genre 등 다른 경로도 시도
+        p = creator_json.get("project", creator_json)
+        core = p.get("core", {}) if isinstance(p, dict) else {}
+        primary = (core.get("genre") if isinstance(core, dict) else "") or ""
+    
+    key = _normalize_genre_for_essence(primary)
+    if key and key in GENRE_ESSENCE_TABLE:
+        essence = dict(GENRE_ESSENCE_TABLE[key])
+        essence["source"] = "lookup_primary"
+        return essence
+    
+    # 3순위 — 사용자 지정 genre_fallback으로 룩업
+    key = _normalize_genre_for_essence(genre_fallback)
+    if key and key in GENRE_ESSENCE_TABLE:
+        essence = dict(GENRE_ESSENCE_TABLE[key])
+        essence["source"] = "lookup_fallback"
+        return essence
+    
+    return empty
+
+
+def build_genre_essence_injection(essence: dict) -> str:
+    """
+    추출된 장르 본질 3중 선언을 system prompt에 주입할 텍스트로 빌드한다.
+    Writer가 매 씬 작성 호출 시 시스템 프롬프트 상단에 이 텍스트를 배치한다.
+    """
+    if not essence or not essence.get("absolute_goal"):
+        return ""
+    
+    triggers = essence.get("emotion_triggers", [])
+    triggers_text = " · ".join(triggers) if triggers else "(미정의)"
+    
+    return f"""
+═══════════════════════════════════════════════════
+★★★ 이 작품의 장르적 절대 목표 (v3.6.0) ★★★
+═══════════════════════════════════════════════════
+"{essence['absolute_goal']}"
+
+★ 장르적 재미(Fun): {essence.get('fun_engine', '(미정의)')}
+★ 감정 유발 3요소: {triggers_text}
+
+★ 이 씬을 작성할 때 매 문단마다 자문하라:
+  "이 씬이 위 절대 목표를 향해 가는가?"
+
+★ 3요소 중 최소 하나는 이 씬에서 반드시 작동해야 한다.
+
+★ 자가 검증 질문: {essence.get('essence_check', '(미정의)')}
+
+★ 이 절대 목표가 작동하지 않으면 그 장르 작품이 아니다.
+   다른 장르로 옮겨도 성립하는 씬은 장르 정합성 실패다.
+═══════════════════════════════════════════════════
+""".strip()
 
 
 # ═══════════════════════════════════════════════════════════
@@ -6190,6 +6465,7 @@ def build_write_beat_prompt(
     fact_based: bool = False,
     historical: bool = False,
     historical_type: str = "",
+    genre_essence: dict = None,       # ★ v3.6.0 신규 — Creator v2.5.5 본질 3중 선언
 ) -> str:
     gr = _genre_text(genre)
     genre_override = get_genre_override(genre)
@@ -6197,6 +6473,13 @@ def build_write_beat_prompt(
     beat_info = BEATS_15[beat_number - 1] if 1 <= beat_number <= 15 else {}
     fact_based_block = get_fact_based_rules(fact_based)
     historical_block = get_historical_film_rules(historical, historical_type)
+    
+    # ★ v3.6.0 — 장르 본질 3중 선언 주입 블록 생성
+    # Creator JSON에서 받았거나, fallback으로 룩업한 본질을 system prompt 상단에 주입.
+    if genre_essence is None:
+        # 호출부에서 essence를 안 넘긴 경우, genre로 fallback 룩업
+        genre_essence = extract_genre_essence({}, genre_fallback=genre)
+    essence_injection = build_genre_essence_injection(genre_essence)
 
     # 캐릭터 바이블 — 매번 전문 (최대 4000자)
     char_block = characters[:4000] if characters else "(캐릭터 정보 없음)"
@@ -6276,6 +6559,32 @@ def build_write_beat_prompt(
     # 비트 종료 시 INTERNAL 메모로 부스터 룰 충족 여부 자가 점검.
     # main.py의 _strip_prop_state_memos()가 PROP CONTINUITY 메모와 함께 자동 제거.
     genre_booster_check_block = get_genre_booster_check_block(genre)
+    
+    # ★ v3.6.0 신규 — GENRE ESSENCE CHECK (장르 본질 자가 검증 게이트)
+    # Creator Engine v2.5.5의 본질 3중 선언을 비트 종료 시 자가 검증.
+    # 단순 부스터 룰을 넘어 "장르적 절대 목표 달성 여부"를 묻는다.
+    essence_check_block = ""
+    if genre_essence and genre_essence.get("absolute_goal"):
+        triggers = genre_essence.get("emotion_triggers", [])
+        triggers_text = " / ".join(triggers) if triggers else ""
+        essence_check_block = f"""
+[★ 비트 종료 시 자가 검증 — GENRE_ESSENCE_CHECK (v3.6.0)]
+
+비트 작성 후 출력 마지막에 다음 형식의 INTERNAL 메모를 작성하라.
+이 메모는 INTERNAL이며 최종 시나리오 본문에는 노출되지 않는다.
+
+<GENRE_ESSENCE_CHECK>
+절대목표 정합성: 이 비트가 "{genre_essence['absolute_goal']}"을 향해 가는가?
+  → YES 또는 NO + 한 줄 근거
+Fun 작동: 장르적 재미({genre_essence.get('fun_engine', '')})가 이 비트에서 작동하는가?
+  → YES 또는 NO + 한 줄 근거
+3요소 작동: 다음 3요소 중 이 비트에서 작동한 요소는?
+  [{triggers_text}]
+  → 작동한 요소들 나열 (최소 1개 필수)
+장르 정합성 테스트: 이 비트를 다른 장르 작품으로 옮겨도 성립하는가?
+  → 성립하면 장르 정합성 실패. 본질 요소를 다음 비트에서 더 강하게 작동시켜라.
+</GENRE_ESSENCE_CHECK>
+""".strip()
 
     # Beat 1 = 오프닝 특별 지시 (OPENING MASTERY v2.2 주입)
     opening_block = ""
@@ -6579,6 +6888,8 @@ AI가 자주 저지르는 엔딩 실수:
 
 이 비트에 해당하는 모든 씬을 한국 표준 시나리오 서식으로 집필하라.
 
+{essence_injection}
+
 [장르]
 {gr}
 {genre_override}
@@ -6615,6 +6926,8 @@ AI가 자주 저지르는 엔딩 실수:
 {helper_character_block}
 
 {genre_booster_check_block}
+
+{essence_check_block}
 
 [세계관]
 {world[:1500] if world else '(씬 플랜 참조)'}

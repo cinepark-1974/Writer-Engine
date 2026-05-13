@@ -15,6 +15,7 @@ from prompt import (
     build_write_beat_prompt,
     build_rewrite_prompt,
     extract_from_creator_json,  # ★ v3.1 신규
+    extract_genre_essence,       # ★ v3.6.0 신규 — 장르 본질 3중 선언 추출
     ENGINE_VERSION,              # ★ v3.1
     ENGINE_BUILD_DATE,           # ★ v3.1
 )
@@ -280,9 +281,17 @@ def _strip_prop_state_memos(text: str) -> str:
     )
     text = pattern_helper.sub('\n', text)
     
+    # ★ v3.6.0 — GENRE_ESSENCE_CHECK 태그 제거
+    # Creator Engine v2.5.5의 본질 3중 선언 자가 검증 메모도 본문 노출 금지.
+    pattern_essence = _re_prop.compile(
+        r'\n*<GENRE_ESSENCE_CHECK>[\s\S]*?</GENRE_ESSENCE_CHECK>\n*',
+        _re_prop.IGNORECASE
+    )
+    text = pattern_essence.sub('\n', text)
+    
     # ★ v3.2.0 — 닫기 태그 없이 떠도는 자가 검증 헤더 (안전망)
     pattern_check_header = _re_prop.compile(
-        r'\n*\[★?\s*비트\s*종료[^\]]*GENRE_BOOSTER_CHECK[^\]]*\][\s\S]*?(?=\n\[|\nS#|\n$|\Z)',
+        r'\n*\[★?\s*비트\s*종료[^\]]*(?:GENRE_BOOSTER_CHECK|GENRE_ESSENCE_CHECK)[^\]]*\][\s\S]*?(?=\n\[|\nS#|\n$|\Z)',
         _re_prop.IGNORECASE
     )
     text = pattern_check_header.sub('\n', text)
@@ -471,11 +480,40 @@ with st.sidebar:
         </div>
         <div style="font-size:.7rem;color:#666;margin-top:8px;">
             Build: {ENGINE_BUILD_DATE}<br>
-            Creator Engine v2.3+ 호환
+            Creator Engine v2.5.5+ 호환
         </div>
     </div>
     """, unsafe_allow_html=True)
     st.caption("버전이 최신인지 확인하세요.")
+    
+    # ★ v3.6.0 — 현재 적용된 장르 본질 3중 선언 표시
+    _essence = st.session_state.get("genre_essence", {}) or {}
+    _genre_now = st.session_state.get("genre", "")
+    if not _essence.get("absolute_goal") and _genre_now:
+        # 세션에 없으면 즉석에서 룩업 (사이드바 표시용)
+        _essence = extract_genre_essence({}, genre_fallback=_genre_now)
+    
+    if _essence.get("absolute_goal"):
+        _triggers = _essence.get("emotion_triggers", [])
+        _triggers_html = " · ".join(_triggers) if _triggers else "(미정의)"
+        _src = _essence.get("source", "none")
+        _src_label = {
+            "creator_json": "Creator JSON 수신",
+            "lookup_primary": "장르명 룩업",
+            "lookup_fallback": "사용자 장르 룩업",
+            "none": "미적용",
+        }.get(_src, _src)
+        st.markdown(f"""
+        <div style="padding:10px;background:#FFF9E6;border-radius:8px;border-left:3px solid #FFCB05;margin-top:12px;font-family:'Pretendard',sans-serif;">
+            <div style="font-size:.7rem;color:#7A6500;font-weight:700;letter-spacing:.05em;margin-bottom:4px;">★ 장르 본질 (v3.6.0)</div>
+            <div style="font-size:.78rem;font-weight:700;color:#1A1A2E;line-height:1.4;">"{_essence['absolute_goal']}"</div>
+            <div style="font-size:.68rem;color:#444;margin-top:6px;">
+                <b>Fun</b>: {_essence.get('fun_engine', '')}<br>
+                <b>3요소</b>: {_triggers_html}
+            </div>
+            <div style="font-size:.62rem;color:#888;margin-top:4px;">소스: {_src_label}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────
 # Custom CSS (Creator Engine 동일 톤)
@@ -648,6 +686,7 @@ for k, v in {
     "fact_based": False,
     "historical": False,
     "historical_type": "팩션",
+    "genre_essence": {},  # ★ v3.6.0 — 장르 본질 3중 선언
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -710,6 +749,8 @@ _BACKUP_KEYS = [
     "plan_1막", "plan_2막", "plan_3막", "story_elements",
     # STEP 3 결과
     "beats_done", "current_beat",
+    # ★ v3.6.0 — 장르 본질 3중 선언 (Creator v2.5.5 연동)
+    "genre_essence",
 ]
 
 
@@ -1647,6 +1688,11 @@ with st.expander("⚡ Creator Engine JSON 업로드 (자동 채우기)", expande
                 if k in st.session_state or k in FIELDS:
                     st.session_state[k] = v
             
+            # ★ v3.6.0 — 장르 본질 3중 선언 추출 (Creator v2.5.5 연동)
+            current_genre = st.session_state.get("genre", "")
+            essence = extract_genre_essence(creator_data, genre_fallback=current_genre)
+            st.session_state["genre_essence"] = essence
+            
             # 엔진 버전 표시
             meta = creator_data.get("_meta", {})
             ce_ver = meta.get("engine_version", "?")
@@ -1661,11 +1707,29 @@ with st.expander("⚡ Creator Engine JSON 업로드 (자동 채우기)", expande
             else:
                 et_msg = "⚪ 미판정 (기존 v3.0 장르 엔딩 규칙 사용)"
             
+            # 본질 3중 선언 판정 결과 알림
+            essence_src = essence.get("source", "none")
+            if essence_src == "creator_json":
+                essence_msg = (
+                    f"🎯 Creator JSON에서 직접 수신 — \"{essence['absolute_goal']}\""
+                )
+            elif essence_src == "lookup_primary":
+                essence_msg = (
+                    f"📚 Creator JSON 장르명으로 내부 룩업 — \"{essence['absolute_goal']}\""
+                )
+            elif essence_src == "lookup_fallback":
+                essence_msg = (
+                    f"🔄 사용자 지정 장르로 fallback 룩업 — \"{essence['absolute_goal']}\""
+                )
+            else:
+                essence_msg = "⚪ 본질 선언 미적용 (구버전 Creator JSON — v3.5.2 방식으로 작동)"
+            
             st.success(
                 f"✅ Creator Engine {ce_ver} / {stage} 단계 로드 완료.\n\n"
-                f"**프로젝트**: {loaded.get('title', '(무제')})\n"
-                f"**엔딩 판정**: {et_msg}\n"
-                f"**로드된 필드**: 11칸 + v3.1 신규 3칸"
+                f"**프로젝트**: {loaded.get('title', '(무제)')}\n\n"
+                f"**엔딩 판정**: {et_msg}\n\n"
+                f"**장르 본질 (v3.6.0)**: {essence_msg}\n\n"
+                f"**로드된 필드**: 11칸 + v3.1 신규 3칸 + v3.6.0 본질 3중 선언"
             )
             st.rerun()
         except json.JSONDecodeError as e:
@@ -2146,6 +2210,11 @@ if plan_ready():
     # 집필
     if write_btn and cur <= 15:
         prev_text = done[cur - 1] if (cur > 1 and (cur - 1) in done) else ""
+        # ★ v3.6.0 — 세션에 essence가 없으면 현재 genre로 fallback 룩업
+        _essence = st.session_state.get("genre_essence")
+        if not _essence or not _essence.get("absolute_goal"):
+            _essence = extract_genre_essence({}, genre_fallback=genre)
+            st.session_state["genre_essence"] = _essence
         prompt = build_write_beat_prompt(
             genre=genre, beat_number=cur,
             scene_plan=combined_plan,
@@ -2163,6 +2232,7 @@ if plan_ready():
             fact_based=st.session_state.get("fact_based", False),
             historical=st.session_state.get("historical", False),
             historical_type=st.session_state.get("historical_type", "팩션"),
+            genre_essence=_essence,                                            # ★ v3.6.0
         )
         st.markdown(f'<div class="beat-tag">Beat {cur} 집필 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=16000))
