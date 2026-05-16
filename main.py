@@ -14,6 +14,7 @@ from prompt import (
     build_extract_elements_prompt,
     build_write_beat_prompt,
     build_rewrite_prompt,
+    build_targeted_rewrite_prompt,  # ★ v3.6.1 신규 — 특정 비트 재집필
     extract_from_creator_json,  # ★ v3.1 신규
     extract_genre_essence,       # ★ v3.6.0 신규 — 장르 본질 3중 선언 추출
     ENGINE_VERSION,              # ★ v3.1
@@ -687,6 +688,8 @@ for k, v in {
     "historical": False,
     "historical_type": "팩션",
     "genre_essence": {},  # ★ v3.6.0 — 장르 본질 3중 선언
+    "beats_history": {},  # ★ v3.6.1 — 비트별 재집필 히스토리 (최대 3개)
+    "rewrite_reference_adjacent": True,  # ★ v3.6.1 — 인접 비트 참조 토글 (기본 ON)
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -751,7 +754,55 @@ _BACKUP_KEYS = [
     "beats_done", "current_beat",
     # ★ v3.6.0 — 장르 본질 3중 선언 (Creator v2.5.5 연동)
     "genre_essence",
+    # ★ v3.6.1 — 비트별 재집필 히스토리 (최대 3개 버전 보존)
+    "beats_history",
 ]
+
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.6.1 — 비트별 재집필 히스토리 관리
+# 작가가 특정 비트를 재집필하면 직전 버전을 히스토리에 푸시.
+# 비트당 최대 3개 버전 보존. 1클릭 되돌리기 지원.
+# ═══════════════════════════════════════════════════════════
+
+_HISTORY_MAX = 3  # 비트당 보존할 최대 버전 개수
+
+
+def push_beat_history(beat_no: int, old_text: str) -> None:
+    """재집필 직전 텍스트를 히스토리에 푸시한다.
+    
+    구조: st.session_state["beats_history"] = {
+        1: ["older_version", "older_version", "previous_version"],
+        ...
+    }
+    가장 오래된 버전은 자동 폐기 (FIFO, 최대 _HISTORY_MAX개).
+    """
+    if "beats_history" not in st.session_state:
+        st.session_state["beats_history"] = {}
+    
+    history = st.session_state["beats_history"]
+    if beat_no not in history:
+        history[beat_no] = []
+    
+    history[beat_no].append(old_text)
+    # 최대 _HISTORY_MAX개만 유지 — 초과 시 가장 오래된 것 제거
+    if len(history[beat_no]) > _HISTORY_MAX:
+        history[beat_no] = history[beat_no][-_HISTORY_MAX:]
+
+
+def pop_beat_history(beat_no: int) -> str:
+    """히스토리에서 가장 최근 백업을 꺼내 반환한다 (되돌리기용).
+    백업이 없으면 빈 문자열 반환."""
+    history = st.session_state.get("beats_history", {})
+    if beat_no not in history or not history[beat_no]:
+        return ""
+    return history[beat_no].pop()
+
+
+def get_beat_history_count(beat_no: int) -> int:
+    """해당 비트의 백업 개수를 반환한다 (UI 표시용)."""
+    history = st.session_state.get("beats_history", {})
+    return len(history.get(beat_no, []))
 
 
 def export_session_backup() -> bytes:
@@ -2168,13 +2219,127 @@ if plan_ready():
     combined_plan = full_plan()
 
     # 완료 비트 표시
+    # ★ v3.6.1 — 각 비트 expander 안에 재집필 미니 UI + 되돌리기 추가
     for b_no in sorted(done.keys()):
         b_info = BEATS_15[b_no - 1]
+        history_count = get_beat_history_count(b_no)
+        # 재집필 흔적 표시 — 히스토리 있으면 다른 아이콘
+        check_mark = f"🔄 ({history_count}회 재집필)" if history_count > 0 else "✅"
         with st.expander(
-            f"{b_info['act']} — Beat {b_no}. {b_info['name']} ✅",
+            f"{b_info['act']} — Beat {b_no}. {b_info['name']} {check_mark}",
             expanded=(b_no == max(done.keys())),
         ):
             st.text(done[b_no])
+            
+            # ── v3.6.1 재집필 미니 UI ──
+            st.markdown("---")
+            st.markdown(
+                f'<div style="font-size:.78rem;color:#191970;font-weight:700;'
+                f'letter-spacing:.03em;margin-bottom:6px;">'
+                f'✂️ 이 비트 다시 쓰기 (Rewrite/Revise 전 손보기)</div>',
+                unsafe_allow_html=True,
+            )
+            rewrite_note_key = f"rewrite_note_b{b_no}"
+            ref_adj_key = f"ref_adj_b{b_no}"
+            
+            rewrite_note = st.text_input(
+                "수정 지시 (선택)",
+                value=st.session_state.get(rewrite_note_key, ""),
+                placeholder="예: 오프닝 더 강하게 / 미드포인트 결정타 추가 / 엔딩 절제형으로",
+                key=rewrite_note_key,
+                label_visibility="collapsed",
+            )
+            
+            col_rw1, col_rw2, col_rw3 = st.columns([2, 2, 1])
+            with col_rw1:
+                # 인접 비트 참조 토글 (전역 기본값 유지, 비트별 오버라이드 가능)
+                ref_default = st.session_state.get("rewrite_reference_adjacent", True)
+                ref_adjacent = st.checkbox(
+                    "직전·직후 비트 참조",
+                    value=st.session_state.get(ref_adj_key, ref_default),
+                    key=ref_adj_key,
+                    help="앞뒤 비트와 감정 연결을 보존합니다. 끄면 이 비트만 독립 재집필.",
+                )
+            with col_rw2:
+                targeted_rewrite_btn = st.button(
+                    f"🔄 Beat {b_no} 다시 쓰기",
+                    key=f"targeted_rewrite_btn_b{b_no}",
+                    use_container_width=True,
+                )
+            with col_rw3:
+                undo_btn = st.button(
+                    "↩️ 되돌리기",
+                    key=f"undo_btn_b{b_no}",
+                    use_container_width=True,
+                    disabled=(history_count == 0),
+                    help=(
+                        f"직전 버전으로 되돌립니다 (남은 백업 {history_count}개)"
+                        if history_count > 0 else
+                        "되돌릴 백업이 없습니다"
+                    ),
+                )
+            
+            # 되돌리기 처리
+            if undo_btn and history_count > 0:
+                old_version = pop_beat_history(b_no)
+                if old_version:
+                    st.session_state["beats_done"][b_no] = old_version
+                    st.success(f"✅ Beat {b_no}을 직전 버전으로 되돌렸습니다.")
+                    st.rerun()
+            
+            # 재집필 처리
+            if targeted_rewrite_btn:
+                # 1. 직전 텍스트를 히스토리에 푸시 (자동 백업)
+                push_beat_history(b_no, done[b_no])
+                
+                # 2. 직전/직후 비트 텍스트 수집
+                prev_text = done.get(b_no - 1, "") if ref_adjacent else ""
+                next_text = done.get(b_no + 1, "") if ref_adjacent else ""
+                
+                # 3. genre essence 확보
+                _essence = st.session_state.get("genre_essence")
+                if not _essence or not _essence.get("absolute_goal"):
+                    _essence = extract_genre_essence({}, genre_fallback=genre)
+                
+                # 4. 안전망 풀세트로 재집필 프롬프트 빌드
+                prompt = build_targeted_rewrite_prompt(
+                    genre=genre,
+                    beat_number=b_no,
+                    current_text=done[b_no],
+                    scene_plan=combined_plan,
+                    characters=st.session_state["characters"],
+                    treatment=st.session_state["treatment"],
+                    tone=st.session_state["tone"],
+                    previous_beat_text=prev_text,
+                    next_beat_text=next_text,
+                    logline=st.session_state["logline"],
+                    world=st.session_state["world"],
+                    story_elements=st.session_state.get("story_elements", ""),
+                    opening_strategy=st.session_state.get("opening_strategy", ""),
+                    bjnd_data=st.session_state.get("bjnd_data", ""),
+                    ending_payoff=st.session_state.get("ending_payoff", ""),
+                    ending_payoff_type=st.session_state.get("ending_payoff_type", ""),
+                    fact_based=st.session_state.get("fact_based", False),
+                    historical=st.session_state.get("historical", False),
+                    historical_type=st.session_state.get("historical_type", "팩션"),
+                    genre_essence=_essence,
+                    user_instruction=rewrite_note,
+                    reference_adjacent=ref_adjacent,
+                )
+                
+                st.markdown(
+                    f'<div class="beat-tag">Beat {b_no} 재집필 중…</div>',
+                    unsafe_allow_html=True,
+                )
+                result = st.write_stream(stream_ai(prompt, tokens=16000))
+                # INTERNAL 메모(소품 상태/GENRE_*_CHECK) 자동 제거
+                result = _strip_prop_state_memos(result)
+                st.session_state["beats_done"][b_no] = result
+                st.success(
+                    f"✅ Beat {b_no} 재집필 완료. "
+                    f"마음에 들지 않으면 ↩️ 되돌리기 버튼으로 복원하세요."
+                )
+                st.rerun()
 
     # 현재 비트 정보
     if cur <= 15:
@@ -2240,18 +2405,54 @@ if plan_ready():
         st.session_state["current_beat"] = cur + 1
         st.rerun()
 
-    # 다시 쓰기
+    # 다시 쓰기 (마지막 비트)
+    # ★ v3.6.1 — build_rewrite_prompt(빈약) → build_targeted_rewrite_prompt(풀세트) 업그레이드
+    # 자동 백업 + 안전망 풀세트 적용 + 직전 비트 참조 기본 ON
     if rewrite_btn and done:
         last_beat = max(done.keys())
-        prompt = build_rewrite_prompt(
-            genre=genre, beat_number=last_beat,
+        # 1. 직전 버전 자동 백업
+        push_beat_history(last_beat, done[last_beat])
+        
+        # 2. 인접 비트 참조 (마지막 비트는 직후가 없으므로 직전만)
+        ref_adjacent = st.session_state.get("rewrite_reference_adjacent", True)
+        prev_text = done.get(last_beat - 1, "") if ref_adjacent else ""
+        next_text = done.get(last_beat + 1, "") if ref_adjacent else ""  # 보통 없음
+        
+        # 3. essence 확보
+        _essence = st.session_state.get("genre_essence")
+        if not _essence or not _essence.get("absolute_goal"):
+            _essence = extract_genre_essence({}, genre_fallback=genre)
+        
+        # 4. 안전망 풀세트 프롬프트
+        prompt = build_targeted_rewrite_prompt(
+            genre=genre,
+            beat_number=last_beat,
             current_text=done[last_beat],
+            scene_plan=combined_plan,
             characters=st.session_state["characters"],
-            instruction=rewrite_note,
+            treatment=st.session_state["treatment"],
+            tone=st.session_state["tone"],
+            previous_beat_text=prev_text,
+            next_beat_text=next_text,
+            logline=st.session_state["logline"],
+            world=st.session_state["world"],
+            story_elements=st.session_state.get("story_elements", ""),
+            opening_strategy=st.session_state.get("opening_strategy", ""),
+            bjnd_data=st.session_state.get("bjnd_data", ""),
+            ending_payoff=st.session_state.get("ending_payoff", ""),
+            ending_payoff_type=st.session_state.get("ending_payoff_type", ""),
+            fact_based=st.session_state.get("fact_based", False),
+            historical=st.session_state.get("historical", False),
+            historical_type=st.session_state.get("historical_type", "팩션"),
+            genre_essence=_essence,
+            user_instruction=rewrite_note,
+            reference_adjacent=ref_adjacent,
         )
         st.markdown(f'<div class="beat-tag">Beat {last_beat} 다시 쓰는 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=16000))
+        result = _strip_prop_state_memos(result)
         st.session_state["beats_done"][last_beat] = result
+        st.success(f"✅ Beat {last_beat} 재집필 완료. 마음에 들지 않으면 비트 영역에서 ↩️ 되돌리기 가능.")
         st.rerun()
 
 # ═══════════════════════════════════════════════════════════

@@ -1,7 +1,33 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v3.6.0
+# BLUE JEANS SCREENPLAY WRITER ENGINE v3.6.1
 # prompt.py — Full Version (Creator Engine v2.5.5 동기화)
 # © 2026 BLUE JEANS PICTURES
+#
+# v3.6.1 주요 변경사항 (2026-05-16):
+# - TARGETED REWRITE 기능 신설 — 특정 비트만 다시 쓰기 (Rewrite/Revise 전 손보기)
+#   * 모든 비트(Beat 1~15) 각각에 재집필 미니 UI 추가
+#   * 자동 백업: 재집필 직전 텍스트를 히스토리 스택에 푸시 (비트당 최대 3개)
+#   * 1클릭 되돌리기: ↩️ 버튼으로 직전 버전 복원
+#   * 재집필된 비트는 "🔄 (N회 재집필)" 표시로 추적
+#
+# - build_targeted_rewrite_prompt() 신설 — 안전망 풀세트 적용
+#   * 기존 build_rewrite_prompt(빈약: 장르+캐릭터+현재텍스트만)와 달리,
+#     build_write_beat_prompt와 동일한 안전망을 모두 적용:
+#     · 장르 본질 3중 선언 (v3.6.0)
+#     · BJND / Sensibility / 오프닝 마스터리 / 엔딩 페이오프
+#     · 씬 플랜 / 캐릭터 바이블 / 톤 문서 / 트리트먼트
+#     · 직전 비트 + 직후 비트 텍스트 (감정 연결 보존)
+#     · 사용자 수정 지시 + 인접 비트 참조 토글
+#
+# - 직전+직후 비트 참조 기본 ON, 비트별 토글로 오프 가능
+#   * 멜로/드라마: 감정 연결 중요 → 인접 비트 참조 권장
+#   * 스릴러/액션: 비트 독립성 강함 → 토글 OFF도 가능
+#
+# - 기존 "마지막 비트 다시" 버튼도 새 안전망으로 업그레이드
+#   * build_rewrite_prompt → build_targeted_rewrite_prompt
+#   * 자동 백업 + 안전망 풀세트 적용
+#
+# - 비트 히스토리는 세션 백업 JSON에도 포함 (작업 중단/재개 시 복원)
 #
 # v3.6.0 주요 변경사항 (2026-05-14):
 # - Creator Engine v2.5.5 "장르 본질 3중 선언" 수신·활용 로직 신설
@@ -199,8 +225,8 @@
 # - Creator JSON 자동 로더
 # ─────────────────────────────────────────────────────────────
 
-ENGINE_VERSION = "v3.6.0"
-ENGINE_BUILD_DATE = "2026-05-14"
+ENGINE_VERSION = "v3.6.1"
+ENGINE_BUILD_DATE = "2026-05-16"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -7265,4 +7291,196 @@ def build_rewrite_prompt(
 
 [OUTPUT]
 개선된 시나리오 전문. 마지막에 --- 후 변경 요약 3줄.
+""".strip()
+
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.6.1 NEW — TARGETED REWRITE (특정 비트 재집필)
+# 작가가 Rewrite/Revise 단계로 넘기기 전에 특정 비트를 손볼 때 사용.
+# build_rewrite_prompt(빈약)와 달리 build_write_beat_prompt의 안전망
+# 풀세트를 그대로 활용한다 (장르 본질 / BJND / 톤 / 씬 플랜 / 인접 비트 / etc).
+# ═══════════════════════════════════════════════════════════
+
+def build_targeted_rewrite_prompt(
+    genre: str,
+    beat_number: int,
+    current_text: str,
+    scene_plan: str,
+    characters: str,
+    treatment: str,
+    tone: str,
+    previous_beat_text: str = "",
+    next_beat_text: str = "",
+    logline: str = "",
+    world: str = "",
+    story_elements: str = "",
+    opening_strategy: str = "",
+    bjnd_data: str = "",
+    ending_payoff: str = "",
+    ending_payoff_type: str = "",
+    fact_based: bool = False,
+    historical: bool = False,
+    historical_type: str = "",
+    genre_essence: dict = None,
+    user_instruction: str = "",
+    reference_adjacent: bool = True,
+) -> str:
+    """
+    특정 비트를 재집필한다 — Rewrite/Revise 전 작가가 손보는 단계.
+    
+    build_write_beat_prompt와 동일한 안전망(장르 본질·BJND·톤·씬 플랜·
+    오프닝/엔딩 룰셋)을 모두 적용하면서, 다음 추가 컨텍스트를 받는다:
+    - current_text: 현재 비트 본문 (강점은 유지)
+    - previous_beat_text: 직전 비트 본문 (감정 연결)
+    - next_beat_text: 직후 비트 본문 (감정 곡선 보존)
+    - user_instruction: 작가가 직접 입력한 수정 지시
+    - reference_adjacent: 인접 비트 참조 토글 (False면 직전/직후 무시)
+    """
+    gr = _genre_text(genre)
+    genre_override = get_genre_override(genre)
+    genre_enforcement = get_genre_enforcement(genre)
+    beat_info = BEATS_15[beat_number - 1] if 1 <= beat_number <= 15 else {}
+    fact_based_block = get_fact_based_rules(fact_based)
+    historical_block = get_historical_film_rules(historical, historical_type)
+
+    # ★ v3.6.0 — 장르 본질 3중 선언
+    if genre_essence is None:
+        genre_essence = extract_genre_essence({}, genre_fallback=genre)
+    essence_injection = build_genre_essence_injection(genre_essence)
+
+    # 비트별 특수 룰셋 (Beat 1=오프닝, Beat 11=All Is Lost, Beat 13/14/15=엔딩)
+    opening_block = ""
+    if beat_number == 1:
+        genre_data = GENRE_RULES.get(genre, {})
+        opening_mastery = get_opening_mastery()
+        opening_dna = get_opening_dna_instruction(genre)
+        creator_opening_block = ""
+        if opening_strategy and opening_strategy.strip():
+            creator_opening_block = f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+★★★ Creator Engine 오프닝 전략 (최우선 적용) ★★★
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{opening_strategy[:3000]}
+
+이 전략의 핵심 장치·기법을 반드시 오프닝에 적용하라.
+""".strip()
+        opening_block = f"""
+
+[★★★ BEAT 1 = OPENING — 오프닝 마스터리 절대 규칙 ★★★]
+{creator_opening_block}
+
+{opening_mastery}
+
+{opening_dna}
+""".strip()
+
+    ending_block = ""
+    if beat_number in (13, 14, 15) and ending_payoff:
+        ending_block = f"""
+
+[★★★ ENDING PAYOFF (Creator Engine 정의) — 이 비트는 엔딩 영역 ★★★]
+{ending_payoff[:3000]}
+
+엔딩 페이오프가 작동하는 시나리오로 다시 써라.
+""".strip()
+
+    # 인접 비트 참조 블록 (토글로 끌 수 있음)
+    adjacent_block = ""
+    if reference_adjacent:
+        adj_parts = []
+        if previous_beat_text:
+            adj_parts.append(
+                f"[★ 직전 비트 (Beat {beat_number-1}) — 감정 연결 참조용]\n"
+                f"{previous_beat_text[:2500]}\n"
+                f"→ 이 비트가 위 비트로부터 자연스럽게 이어져야 한다."
+            )
+        if next_beat_text:
+            adj_parts.append(
+                f"[★ 직후 비트 (Beat {beat_number+1}) — 감정 곡선 보존용]\n"
+                f"{next_beat_text[:2500]}\n"
+                f"→ 이 비트의 끝이 위 비트로 자연스럽게 이어져야 한다.\n"
+                f"  소품 상태·인물 위치·감정 온도가 위 직후 비트의 시작과 맞아야 한다."
+            )
+        if adj_parts:
+            adjacent_block = "\n\n".join(adj_parts)
+
+    user_inst = user_instruction.strip() if user_instruction else (
+        "극적 힘, 서브텍스트, 캐릭터 보이스, 장르 본질, Hook & Punch를 강화하라."
+    )
+
+    # BJND / Sensibility 블록은 build_write_beat_prompt와 동일한 헬퍼 사용
+    bjnd_block_text = ""
+    if bjnd_data:
+        bjnd_block_text = f"[BJND 4축 설계 (Creator)]\n{bjnd_data[:2000]}"
+
+    treat_block = treatment[:2500] if treatment else "(트리트먼트 없음 — 씬 플랜 우선 참조)"
+    tone_block = tone[:1500] if tone else ""
+    char_block = characters[:3000] if characters else ""
+    se_block = ""
+    if story_elements:
+        se_block = f"[⚡ 핵심 요소 — 반드시 반영]\n{story_elements[:2000]}"
+
+    return f"""
+[TASK] Beat {beat_number} 재집필 — {beat_info.get('name', '')} ({beat_info.get('act', '')})
+{beat_info.get('desc', '')}
+
+★★★ 이 작업은 "특정 비트 재집필"이다 ★★★
+- 작가가 Rewrite/Revise 단계로 넘기기 전에 이 한 비트를 손보고 싶어 한다.
+- 다른 비트는 그대로 유지된다 — 이 비트만 새로 쓴다.
+- 따라서 직전/직후 비트와의 연결성이 가장 중요하다.
+
+[작가의 수정 지시]
+{user_inst}
+
+{essence_injection}
+
+[장르]
+{gr}
+{genre_override}
+
+{genre_enforcement}
+
+[로그라인] {logline or '(생략)'}
+{opening_block}
+{ending_block}
+
+{bjnd_block_text}
+
+[씬 플랜 — 이 비트의 씬을 정확히 따르라]
+{scene_plan}
+
+[캐릭터 바이블 — 말투·리듬·태도 반영 필수]
+{char_block}
+
+{adjacent_block}
+
+[현재 비트 텍스트 — 강점은 유지, 약점만 개선하라]
+{current_text}
+
+[세계관]
+{world[:1500] if world else '(씬 플랜 참조)'}
+
+[트리트먼트]
+{treat_block}
+
+{f"[톤 문서]{chr(10)}{tone_block}" if tone_block else ""}
+{fact_based_block}
+{historical_block}
+{se_block}
+
+[RULES — 재집필 핵심 원칙]
+1. 작가의 수정 지시를 최우선 반영.
+2. 강점 유지, 약점만 개선 — 통째로 갈아엎지 마라.
+3. 캐릭터 보이스가 일관되어야 함 (다른 비트와 톤이 어긋나면 실패).
+4. 직전/직후 비트와의 감정 연결 보존 (감정 곡선이 끊기면 실패).
+5. 씬 플랜의 씬 번호·장소·시간을 그대로 따른다.
+6. 설명성 대사 제거, 지문 압축 (소설체 금지).
+7. Hook(씬 시작)과 Punch(씬 끝)가 모든 씬에 있는지 점검.
+8. 장르 본질 3중 선언이 작동하는지 매 단락 자문.
+
+[OUTPUT FORMAT]
+재집필된 시나리오 본문만 출력.
+씬 헤딩(S#N. INT./EXT. ...) 포함.
+한국 시나리오 표준 포맷 (지문↔대사 사이 빈 줄).
+INTERNAL 메모(소품 상태/GENRE_BOOSTER_CHECK 등)도 평소대로 작성.
 """.strip()
