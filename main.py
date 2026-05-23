@@ -481,7 +481,7 @@ with st.sidebar:
         </div>
         <div style="font-size:.7rem;color:#666;margin-top:8px;">
             Build: {ENGINE_BUILD_DATE}<br>
-            Creator Engine v2.5.5+ 호환
+            Creator Engine v2.6.0+ 호환
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -513,6 +513,39 @@ with st.sidebar:
                 <b>3요소</b>: {_triggers_html}
             </div>
             <div style="font-size:.62rem;color:#888;margin-top:4px;">소스: {_src_label}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ★ v3.7.1 — Creator v2.6.0 사전 방지 데이터 수신 상태 표시
+    _v26_status = []
+    if st.session_state.get("cycle_design"):
+        _v26_status.append("행동 사이클")
+    if st.session_state.get("setup_payoff_table"):
+        _v26_status.append("Setup-Payoff")
+    if st.session_state.get("physical_cost_plan_text"):
+        _v26_status.append("신체 대가 4단계")
+    if st.session_state.get("antagonist_actions"):
+        _v26_status.append("적대자 능동 행위")
+    _beat_v26_count = len(st.session_state.get("beat_v26_data", {}))
+
+    if _v26_status:
+        _v26_list_html = " · ".join(_v26_status)
+        st.markdown(f"""
+        <div style="padding:10px;background:#E8F5E9;border-radius:8px;border-left:3px solid #2EC484;margin-top:12px;font-family:'Pretendard',sans-serif;">
+            <div style="font-size:.7rem;color:#1B5E20;font-weight:700;letter-spacing:.05em;margin-bottom:4px;">🛡️ 사전 방지 (v3.7.1)</div>
+            <div style="font-size:.74rem;font-weight:700;color:#1A1A2E;line-height:1.4;">Creator v2.6.0 데이터 수신</div>
+            <div style="font-size:.68rem;color:#444;margin-top:6px;">
+                <b>수신 항목</b>: {_v26_list_html}<br>
+                <b>비트 매핑</b>: {_beat_v26_count}개 비트
+            </div>
+            <div style="font-size:.62rem;color:#666;margin-top:4px;">A28/A29 자가 점검 + 사전 설계 검증 동시 작동</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div style="padding:10px;background:#F5F5F5;border-radius:8px;border-left:3px solid #BDBDBD;margin-top:12px;font-family:'Pretendard',sans-serif;">
+            <div style="font-size:.7rem;color:#555;font-weight:700;letter-spacing:.05em;margin-bottom:4px;">⚪ 사전 방지 (v3.7.1)</div>
+            <div style="font-size:.7rem;color:#666;line-height:1.4;">Creator v2.6.0 데이터 없음<br>Writer 자가 점검(A28/A29)만 작동</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -675,7 +708,10 @@ details[open] > div { background-color: var(--card) !important; }
 # ─────────────────────────────────────
 FIELDS = ["title", "logline", "intent", "gns", "characters", "opening_strategy",
           "world", "structure", "scene_design", "treatment", "tone",
-          "bjnd_data", "ending_payoff", "ending_payoff_type"]  # ★ v3.1 신규 3개
+          "bjnd_data", "ending_payoff", "ending_payoff_type",  # ★ v3.1 신규 3개
+          # ★ v3.7.1 신규 — Creator v2.6.0 4종 사전 방지 데이터
+          "cycle_design", "setup_payoff_table", "physical_cost_plan_text",
+          "antagonist_actions"]
 
 for k, v in {
     "plan_1막": "", "plan_2막": "", "plan_3막": "",
@@ -690,6 +726,7 @@ for k, v in {
     "genre_essence": {},  # ★ v3.6.0 — 장르 본질 3중 선언
     "beats_history": {},  # ★ v3.6.1 — 비트별 재집필 히스토리 (최대 3개)
     "rewrite_reference_adjacent": True,  # ★ v3.6.1 — 인접 비트 참조 토글 (기본 ON)
+    "beat_v26_data": {},  # ★ v3.7.1 — 비트 번호별 Creator v2.6.0 4필드
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -1774,13 +1811,33 @@ with st.expander("⚡ Creator Engine JSON 업로드 (자동 채우기)", expande
                 )
             else:
                 essence_msg = "⚪ 본질 선언 미적용 (구버전 Creator JSON — v3.5.2 방식으로 작동)"
-            
+
+            # ★ v3.7.1 — Creator v2.6.0 4종 사전 방지 데이터 수신 여부 표시
+            v26_received = []
+            if loaded.get("cycle_design"):
+                v26_received.append("행동 사이클")
+            if loaded.get("setup_payoff_table"):
+                v26_received.append("Setup-Payoff")
+            if loaded.get("physical_cost_plan_text"):
+                v26_received.append("신체 대가 4단계")
+            if loaded.get("antagonist_actions"):
+                v26_received.append("적대자 능동 행위")
+            beat_v26_count = len(loaded.get("beat_v26_data", {}))
+            if v26_received:
+                v26_msg = (
+                    f"🛡️ Creator v2.6.0 사전 방지 데이터 수신 — "
+                    f"{', '.join(v26_received)} ({beat_v26_count}개 비트 매핑)"
+                )
+            else:
+                v26_msg = "⚪ v2.6.0 사전 방지 데이터 없음 (구버전 Creator JSON — Writer 자가 점검만 작동)"
+
             st.success(
                 f"✅ Creator Engine {ce_ver} / {stage} 단계 로드 완료.\n\n"
                 f"**프로젝트**: {loaded.get('title', '(무제)')}\n\n"
                 f"**엔딩 판정**: {et_msg}\n\n"
                 f"**장르 본질 (v3.6.0)**: {essence_msg}\n\n"
-                f"**로드된 필드**: 11칸 + v3.1 신규 3칸 + v3.6.0 본질 3중 선언"
+                f"**사전 방지 (v3.7.1)**: {v26_msg}\n\n"
+                f"**로드된 필드**: 11칸 + v3.1 신규 3칸 + v3.6.0 본질 + v3.7.1 사전 방지 4종"
             )
             st.rerun()
         except json.JSONDecodeError as e:
@@ -2325,6 +2382,12 @@ if plan_ready():
                     genre_essence=_essence,
                     user_instruction=rewrite_note,
                     reference_adjacent=ref_adjacent,
+                    # ★ v3.7.1 — Creator v2.6.0 사전 방지 데이터 전달
+                    beat_v26_data=st.session_state.get("beat_v26_data", {}).get(b_no, {}),
+                    cycle_design=st.session_state.get("cycle_design", ""),
+                    setup_payoff_table=st.session_state.get("setup_payoff_table", ""),
+                    physical_cost_plan_text=st.session_state.get("physical_cost_plan_text", ""),
+                    antagonist_actions=st.session_state.get("antagonist_actions", ""),
                 )
                 
                 st.markdown(
@@ -2398,6 +2461,12 @@ if plan_ready():
             historical=st.session_state.get("historical", False),
             historical_type=st.session_state.get("historical_type", "팩션"),
             genre_essence=_essence,                                            # ★ v3.6.0
+            # ★ v3.7.1 — Creator v2.6.0 사전 방지 데이터 전달
+            beat_v26_data=st.session_state.get("beat_v26_data", {}).get(cur, {}),
+            cycle_design=st.session_state.get("cycle_design", ""),
+            setup_payoff_table=st.session_state.get("setup_payoff_table", ""),
+            physical_cost_plan_text=st.session_state.get("physical_cost_plan_text", ""),
+            antagonist_actions=st.session_state.get("antagonist_actions", ""),
         )
         st.markdown(f'<div class="beat-tag">Beat {cur} 집필 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=16000))
@@ -2447,6 +2516,12 @@ if plan_ready():
             genre_essence=_essence,
             user_instruction=rewrite_note,
             reference_adjacent=ref_adjacent,
+            # ★ v3.7.1 — Creator v2.6.0 사전 방지 데이터 전달
+            beat_v26_data=st.session_state.get("beat_v26_data", {}).get(last_beat, {}),
+            cycle_design=st.session_state.get("cycle_design", ""),
+            setup_payoff_table=st.session_state.get("setup_payoff_table", ""),
+            physical_cost_plan_text=st.session_state.get("physical_cost_plan_text", ""),
+            antagonist_actions=st.session_state.get("antagonist_actions", ""),
         )
         st.markdown(f'<div class="beat-tag">Beat {last_beat} 다시 쓰는 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=16000))

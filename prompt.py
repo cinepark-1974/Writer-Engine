@@ -1,7 +1,46 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v3.7.0
-# prompt.py — Full Version (Creator Engine v2.5.5 동기화)
+# BLUE JEANS SCREENPLAY WRITER ENGINE v3.7.1
+# prompt.py — Full Version (Creator Engine v2.6.0 동기화)
 # © 2026 BLUE JEANS PICTURES
+#
+# v3.7.1 주요 변경사항 (2026-05-23, same-day patch):
+# - Creator Engine v2.6.0 신규 4필드 수신·활용 로직 신설
+#   * Mr. MOON 진단: "Writer A28/A29는 사후 감지, Creator v2.6.0은 사전 방지.
+#     양쪽이 같은 데이터 모델을 공유해야 진짜 효과가 난다."
+#   * Creator v2.6.0이 트리트먼트 단계에서 미리 설계한 4종 데이터를
+#     Writer가 비트 집필 시 받아서 검증·반영하도록 강제.
+#
+# - extract_from_creator_json() 확장 — 신규 result 키 5종 추가
+#   * cycle_design: 비트별 행동 사이클 4단계 + 외부 조력자 만남 경고 자동 생성
+#   * setup_payoff_table: 비트별 SETUP/PAYOFF 매핑 + 회수 누락 자동 탐지
+#   * physical_cost_plan_text: 주인공 4단계 대가 계획 + 비트별 누적 흔적
+#   * antagonist_actions: 비트별 적대자 능동 행위 매핑
+#   * beat_v26_data: 비트 번호별 v2.6.0 4필드 dict (집필 시 비트별 주입)
+#
+# - _collect_treatment_beats() 헬퍼 신규
+#   * 트리트먼트 JSON의 2가지 구조(acts 배열 / 평탄 beats) 모두 지원
+#   * 구버전 Creator JSON은 빈 리스트 안전 fallback
+#
+# - build_write_beat_prompt() 시그니처 확장 — 5개 신규 keyword 파라미터
+#   * beat_v26_data, cycle_design, setup_payoff_table,
+#     physical_cost_plan_text, antagonist_actions (모두 기본값 있음)
+#   * 구버전 호출 100% 호환 (모두 keyword-only with default)
+#
+# - build_targeted_rewrite_prompt() 동일 시그니처 확장
+#   * 재집필 시에도 동일한 v2.6.0 안전망 적용
+#
+# - v26_block_text 주입 블록 — system prompt에 직접 삽입
+#   * 해당 비트의 4필드 (가장 강조)
+#   * 작품 전체 컨텍스트 (4종 텍스트 블록)
+#   * Setup/Payoff 자동 표시: PAYOFF 비트면 "회수 비트" 명시,
+#     SETUP 비트면 "도입 비트" 명시
+#   * physical_cost_stage ≥ 2면 "이전 단계 흔적 함께 보여야 함" 강제
+#
+# - 하위 호환성 100% 보장
+#   * 구버전 Creator JSON (v2.5.x 이하): 모든 v2.6.0 result 키가 빈 문자열
+#   * 신규 파라미터는 모두 keyword-only with default
+#   * 빈 데이터 시 v26_block_text 자체가 생성되지 않음 (system prompt 변화 없음)
+#   * main.py는 신규 호출 없이도 작동, 호출 시 새 데이터 전달 가능
 #
 # v3.7.0 주요 변경사항 (2026-05-23):
 # - 8점 진입 룰 신설 (A28~A29) — Rewrite Engine 7점대 정체 작품 분석에서
@@ -259,7 +298,7 @@
 # - Creator JSON 자동 로더
 # ─────────────────────────────────────────────────────────────
 
-ENGINE_VERSION = "v3.7.0"
+ENGINE_VERSION = "v3.7.1"
 ENGINE_BUILD_DATE = "2026-05-23"
 
 
@@ -726,14 +765,29 @@ def build_genre_essence_injection(essence: dict) -> str:
 
 def extract_from_creator_json(creator_json: dict) -> dict:
     """
-    Creator Engine v2.3+ JSON을 받아 Writer 11개 입력 필드 + v3.1 신규 3개 필드로 변환.
+    Creator Engine v2.3+ JSON을 받아 Writer 입력 필드로 변환.
     v1.9/v2.2 구형 프로젝트는 신규 필드가 빈 문자열로 반환됨.
+
+    v3.7.1 신규 — Creator v2.6.0 트리트먼트의 4종 신규 필드 수신:
+    - action_cycle (비트별 공간 시퀀스 4단계)
+    - setup_payoff_id (비트별 Setup/Payoff 식별자)
+    - physical_cost_stage / physical_cost_description (비트별 신체 대가 단계)
+    - antagonist_active_action (비트별 적대자 능동 행위)
+    + char_bible의 physical_cost_plan (주인공 4단계 계획)
+
+    구버전 Creator JSON은 .get() 기반 안전 fallback으로 빈 문자열 반환.
+    Writer는 신규 필드가 비어 있어도 v3.7.0 자가 점검(A28/A29)으로 동작.
     """
     result = {k: "" for k in [
         "title", "logline", "intent", "gns", "characters", "opening_strategy",
         "world", "structure", "scene_design", "treatment", "tone",
-        "bjnd_data", "ending_payoff", "ending_payoff_type"
+        "bjnd_data", "ending_payoff", "ending_payoff_type",
+        # ★ v3.7.1 — Creator v2.6.0 신규 필드
+        "cycle_design", "setup_payoff_table", "physical_cost_plan_text",
+        "antagonist_actions",
     ]}
+    # ★ v3.7.1 — 비트 번호별 v2.6.0 데이터 (집필 시 해당 비트만 주입)
+    result["beat_v26_data"] = {}
     
     if not creator_json:
         return result
@@ -851,8 +905,153 @@ def extract_from_creator_json(creator_json: dict) -> dict:
         src = p.get(src_key, {}) or {}
         if isinstance(src, dict):
             result[field_name] = _dict_to_text(src)
-    
+
+    # ═══════════════════════════════════════════════════════════
+    # ★ v3.7.1 — Creator v2.6.0 신규 4필드 파싱
+    # 트리트먼트의 비트별 신규 필드 + 캐릭터 바이블의 physical_cost_plan
+    # 구버전 Creator JSON은 모든 필드가 빈 문자열로 안전 fallback
+    # ═══════════════════════════════════════════════════════════
+
+    # ── ① 캐릭터 바이블에서 주인공의 physical_cost_plan 추출
+    pcp_lines = []
+    if isinstance(cb, dict):
+        for name, bible in cb.items():
+            if isinstance(bible, dict):
+                pcp = bible.get("physical_cost_plan", "")
+                if pcp:
+                    pcp_lines.append(f"[{name}] {pcp}")
+    if pcp_lines:
+        result["physical_cost_plan_text"] = "\n".join(pcp_lines)
+
+    # ── ② 트리트먼트 비트에서 v2.6.0 4필드 수집
+    # 트리트먼트 JSON 구조: project.treatment.acts[].beats[] 또는
+    # project.treatment.beats[] (단순 구조)
+    treatment_raw = p.get("treatment", {}) or {}
+    beats_collected = _collect_treatment_beats(treatment_raw)
+
+    cycle_lines = []
+    setup_payoff_lines = []
+    cost_lines = []
+    antagonist_lines = []
+    helper_meetings = {}  # location → [beat_no, ...]
+
+    for beat in beats_collected:
+        bn = beat.get("beat_no", 0)
+        if not isinstance(bn, int) or bn < 1 or bn > 15:
+            continue
+
+        # 비트별 v2.6.0 dict 저장 (집필 시 주입용)
+        beat_v26 = {
+            "action_cycle": beat.get("action_cycle", "") or "",
+            "setup_payoff_id": beat.get("setup_payoff_id", "") or "",
+            "physical_cost_stage": beat.get("physical_cost_stage", 0) or 0,
+            "physical_cost_description": beat.get("physical_cost_description", "") or "",
+            "antagonist_active_action": beat.get("antagonist_active_action", "") or "",
+        }
+        # 비어있지 않은 필드가 1개라도 있을 때만 저장
+        if any(v for v in beat_v26.values()):
+            result["beat_v26_data"][bn] = beat_v26
+
+        # 텍스트 블록 누적
+        ac = beat_v26["action_cycle"]
+        if ac:
+            cycle_lines.append(f"Beat {bn}: {ac}")
+            # 외부 조력자 만남 카운트 (사이클 3번째 단계 = 외부 조력 공간)
+            parts = [x.strip() for x in ac.split("→")]
+            if len(parts) >= 3:
+                helper_loc = parts[2]
+                helper_meetings.setdefault(helper_loc, []).append(bn)
+
+        sp = beat_v26["setup_payoff_id"]
+        if sp:
+            setup_payoff_lines.append(f"Beat {bn}: {sp}")
+
+        pcd = beat_v26["physical_cost_description"]
+        stage = beat_v26["physical_cost_stage"]
+        if pcd or stage:
+            cost_lines.append(f"Beat {bn} (stage {stage}): {pcd}")
+
+        aa = beat_v26["antagonist_active_action"]
+        if aa:
+            antagonist_lines.append(f"Beat {bn}: {aa}")
+
+    if cycle_lines:
+        result["cycle_design"] = "\n".join(cycle_lines)
+        # 외부 조력자 만남 3회 이상 경고 추가
+        warnings = [f"⚠ {loc}: {len(bns)}회 ({', '.join(f'B{b}' for b in bns)})"
+                    for loc, bns in helper_meetings.items() if len(bns) >= 3]
+        if warnings:
+            result["cycle_design"] += "\n\n[외부 조력자 만남 3회+ 경고 — A28 변주 필수]\n" + "\n".join(warnings)
+
+    if setup_payoff_lines:
+        result["setup_payoff_table"] = "\n".join(setup_payoff_lines)
+        # Setup만 있고 Payoff 없는 항목 자동 탐지
+        # 각 라인은 "Beat N: SETUP:항목, PAYOFF:항목, ..." 형식
+        # → 첫 콜론(Beat N:) 이후 부분에서 SETUP:/PAYOFF: 토큰 추출
+        setups = set()
+        payoffs = set()
+        for line in setup_payoff_lines:
+            # "Beat N: " 부분 제거 후 토큰 추출
+            if ":" in line:
+                after_beat = line.split(":", 1)[1].strip()  # "SETUP:Pak Wiranto, PAYOFF:..."
+            else:
+                after_beat = line
+            for token in after_beat.split(","):
+                token = token.strip()
+                if token.startswith("SETUP:"):
+                    setups.add(token[6:].strip())
+                elif token.startswith("PAYOFF:"):
+                    payoffs.add(token[7:].strip())
+        unpaid = setups - payoffs
+        if unpaid:
+            result["setup_payoff_table"] += "\n\n[회수 필요 — A31 후속 보강 예정]\n" + \
+                "\n".join(f"⚠ {item}: Setup 있음, Payoff 없음" for item in sorted(unpaid))
+
+    if cost_lines:
+        result["physical_cost_plan_text"] = (
+            result["physical_cost_plan_text"] + "\n\n[비트별 누적 흔적]\n" + "\n".join(cost_lines)
+            if result["physical_cost_plan_text"] else
+            "[비트별 누적 흔적]\n" + "\n".join(cost_lines)
+        )
+
+    if antagonist_lines:
+        result["antagonist_actions"] = "\n".join(antagonist_lines)
+
     return result
+
+
+def _collect_treatment_beats(treatment_raw: dict) -> list:
+    """
+    ★ v3.7.1 — 트리트먼트 JSON에서 비트 리스트 추출
+    
+    Creator v2.6.0 트리트먼트는 다음 두 가지 구조 중 하나로 출력됨:
+      (A) {"acts": [{"act": 1, "beats": [...]}, {"act": 2, "beats": [...]}, ...]}
+      (B) {"beats": [...]} — 단순 평탄 구조
+    
+    구버전 Creator는 신규 필드가 없으므로 빈 dict이거나 다른 구조 가능.
+    어떤 경우든 크래시 없이 빈 리스트 반환.
+    """
+    if not isinstance(treatment_raw, dict):
+        return []
+    
+    # (A) acts 배열 구조
+    acts = treatment_raw.get("acts", [])
+    if isinstance(acts, list) and acts:
+        beats = []
+        for act in acts:
+            if isinstance(act, dict):
+                act_beats = act.get("beats", [])
+                if isinstance(act_beats, list):
+                    beats.extend(b for b in act_beats if isinstance(b, dict))
+        if beats:
+            return beats
+    
+    # (B) 단순 beats 구조
+    flat_beats = treatment_raw.get("beats", [])
+    if isinstance(flat_beats, list):
+        return [b for b in flat_beats if isinstance(b, dict)]
+    
+    return []
 
 
 def _dict_to_text(d: dict, indent: int = 0) -> str:
@@ -6662,6 +6861,15 @@ def build_write_beat_prompt(
     historical: bool = False,
     historical_type: str = "",
     genre_essence: dict = None,       # ★ v3.6.0 신규 — Creator v2.5.5 본질 3중 선언
+    # ═══════════════════════════════════════════════════════════
+    # ★ v3.7.1 신규 — Creator v2.6.0 4종 사전 방지 데이터
+    # 모두 기본값 있어서 구버전 호출 100% 호환
+    # ═══════════════════════════════════════════════════════════
+    beat_v26_data: dict = None,       # ★ v3.7.1 — 해당 비트의 v2.6.0 4필드
+    cycle_design: str = "",           # ★ v3.7.1 — 작품 전체 행동 사이클 설계
+    setup_payoff_table: str = "",     # ★ v3.7.1 — 작품 전체 Setup-Payoff 테이블
+    physical_cost_plan_text: str = "", # ★ v3.7.1 — 주인공 4단계 대가 계획
+    antagonist_actions: str = "",     # ★ v3.7.1 — 비트별 적대자 능동 행위 매핑
 ) -> str:
     gr = _genre_text(genre)
     genre_override = get_genre_override(genre)
@@ -6683,6 +6891,71 @@ def build_write_beat_prompt(
     tone_block = tone[:1500] if tone else ""
     # 트리트먼트 — 전문 (AI가 해당 비트 구간 참조)
     treat_block = treatment[:5000] if treatment else ""
+
+    # ═══════════════════════════════════════════════════════════
+    # ★ v3.7.1 — Creator v2.6.0 사전 방지 데이터 주입 블록
+    # 4종 데이터(cycle / setup-payoff / cost / antagonist)를 비트 집필 직전 주입.
+    # Creator v2.6.0이 미리 설계한 내용을 Writer가 검증·반영하도록 강제.
+    # 구버전 Creator는 모든 필드가 빈 문자열 → 블록 자체가 생성되지 않음 (하위 호환).
+    # ═══════════════════════════════════════════════════════════
+    v26_blocks = []
+
+    # ── 해당 비트의 4필드 (가장 중요)
+    if beat_v26_data and isinstance(beat_v26_data, dict):
+        bv26 = beat_v26_data
+        beat_v26_lines = []
+        if bv26.get("action_cycle"):
+            beat_v26_lines.append(f"  · 행동 사이클(A28): {bv26['action_cycle']}")
+        sp = bv26.get("setup_payoff_id", "")
+        if sp:
+            beat_v26_lines.append(f"  · Setup/Payoff: {sp}")
+            if sp.startswith("PAYOFF:") or ",PAYOFF:" in sp or ", PAYOFF:" in sp:
+                beat_v26_lines.append(f"    ★ 이 비트는 회수 비트 — 해당 항목이 반드시 의미 있게 등장해야 함")
+            if sp.startswith("SETUP:") or ",SETUP:" in sp or ", SETUP:" in sp:
+                beat_v26_lines.append(f"    ★ 이 비트는 도입 비트 — 해당 항목을 자연스럽게 심을 것 (Plant)")
+        stage = bv26.get("physical_cost_stage", 0)
+        pcd = bv26.get("physical_cost_description", "")
+        if stage or pcd:
+            beat_v26_lines.append(f"  · 신체 대가(A29) — 단계 {stage}: {pcd}")
+            if stage >= 2:
+                beat_v26_lines.append(f"    ★ 이전 단계(1~{stage-1}) 흔적도 함께 보여야 함 — 리셋 금지")
+        aa = bv26.get("antagonist_active_action", "")
+        if aa:
+            beat_v26_lines.append(f"  · 적대자 능동 행위: {aa}")
+            beat_v26_lines.append(f"    ★ 침묵·외면이 아닌 능동적 행동으로 장면화할 것")
+        if beat_v26_lines:
+            v26_blocks.append(
+                "[★★★ Creator v2.6.0 — 이 비트의 사전 방지 설계 (반드시 반영) ★★★]\n"
+                + "\n".join(beat_v26_lines)
+            )
+
+    # ── 작품 전체 컨텍스트 (해당 비트 데이터가 없어도 작품 차원 정보는 유지)
+    context_lines = []
+    if physical_cost_plan_text:
+        context_lines.append(
+            "[주인공 신체 대가 4단계 계획 (A29 참조)]\n" + physical_cost_plan_text[:2000]
+        )
+    if cycle_design:
+        # 사이클 설계는 분량이 클 수 있으므로 첫 3000자만
+        context_lines.append(
+            "[작품 전체 행동 사이클 설계 (A28 참조 — 직전 2비트와 비교)]\n" + cycle_design[:3000]
+        )
+    if setup_payoff_table:
+        context_lines.append(
+            "[작품 Setup-Payoff 테이블 (회수 의무 추적)]\n" + setup_payoff_table[:2000]
+        )
+    if antagonist_actions:
+        context_lines.append(
+            "[비트별 적대자 능동 행위 매핑 (수동 회피 금지)]\n" + antagonist_actions[:2000]
+        )
+    if context_lines:
+        v26_blocks.append(
+            "[Creator v2.6.0 작품 전체 컨텍스트]\n" + "\n\n".join(context_lines)
+        )
+
+    v26_block_text = "\n\n".join(v26_blocks)
+    if v26_block_text:
+        v26_block_text = "\n\n" + v26_block_text + "\n"
 
     # 직전 비트 연속성
     prev_block = ""
@@ -7085,7 +7358,7 @@ AI가 자주 저지르는 엔딩 실수:
 이 비트에 해당하는 모든 씬을 한국 표준 시나리오 서식으로 집필하라.
 
 {essence_injection}
-
+{v26_block_text}
 [장르]
 {gr}
 {genre_override}
@@ -7499,6 +7772,12 @@ def build_targeted_rewrite_prompt(
     genre_essence: dict = None,
     user_instruction: str = "",
     reference_adjacent: bool = True,
+    # ★ v3.7.1 신규 — Creator v2.6.0 4종 사전 방지 데이터
+    beat_v26_data: dict = None,
+    cycle_design: str = "",
+    setup_payoff_table: str = "",
+    physical_cost_plan_text: str = "",
+    antagonist_actions: str = "",
 ) -> str:
     """
     특정 비트를 재집필한다 — Rewrite/Revise 전 작가가 손보는 단계.
@@ -7522,6 +7801,60 @@ def build_targeted_rewrite_prompt(
     if genre_essence is None:
         genre_essence = extract_genre_essence({}, genre_fallback=genre)
     essence_injection = build_genre_essence_injection(genre_essence)
+
+    # ═══════════════════════════════════════════════════════════
+    # ★ v3.7.1 — Creator v2.6.0 사전 방지 데이터 주입 블록
+    # build_write_beat_prompt와 동일한 빌더 (재집필 시에도 동일 안전망)
+    # ═══════════════════════════════════════════════════════════
+    v26_blocks = []
+    if beat_v26_data and isinstance(beat_v26_data, dict):
+        bv26 = beat_v26_data
+        beat_v26_lines = []
+        if bv26.get("action_cycle"):
+            beat_v26_lines.append(f"  · 행동 사이클(A28): {bv26['action_cycle']}")
+        sp = bv26.get("setup_payoff_id", "")
+        if sp:
+            beat_v26_lines.append(f"  · Setup/Payoff: {sp}")
+        stage = bv26.get("physical_cost_stage", 0)
+        pcd = bv26.get("physical_cost_description", "")
+        if stage or pcd:
+            beat_v26_lines.append(f"  · 신체 대가(A29) — 단계 {stage}: {pcd}")
+            if stage >= 2:
+                beat_v26_lines.append(f"    ★ 이전 단계 흔적도 함께 보여야 함 — 리셋 금지")
+        aa = bv26.get("antagonist_active_action", "")
+        if aa:
+            beat_v26_lines.append(f"  · 적대자 능동 행위: {aa}")
+        if beat_v26_lines:
+            v26_blocks.append(
+                "[★★★ Creator v2.6.0 — 이 비트의 사전 방지 설계 (반드시 반영) ★★★]\n"
+                + "\n".join(beat_v26_lines)
+            )
+
+    context_lines = []
+    if physical_cost_plan_text:
+        context_lines.append(
+            "[주인공 신체 대가 4단계 계획 (A29 참조)]\n" + physical_cost_plan_text[:2000]
+        )
+    if cycle_design:
+        context_lines.append(
+            "[작품 행동 사이클 설계 (A28 참조)]\n" + cycle_design[:3000]
+        )
+    if setup_payoff_table:
+        context_lines.append(
+            "[Setup-Payoff 테이블]\n" + setup_payoff_table[:2000]
+        )
+    if antagonist_actions:
+        context_lines.append(
+            "[비트별 적대자 능동 행위 매핑]\n" + antagonist_actions[:2000]
+        )
+    if context_lines:
+        v26_blocks.append(
+            "[Creator v2.6.0 작품 전체 컨텍스트]\n" + "\n\n".join(context_lines)
+        )
+
+    v26_block_text = "\n\n".join(v26_blocks)
+    if v26_block_text:
+        v26_block_text = "\n\n" + v26_block_text + "\n"
 
     # 비트별 특수 룰셋 (Beat 1=오프닝, Beat 11=All Is Lost, Beat 13/14/15=엔딩)
     opening_block = ""
@@ -7608,7 +7941,7 @@ def build_targeted_rewrite_prompt(
 {user_inst}
 
 {essence_injection}
-
+{v26_block_text}
 [장르]
 {gr}
 {genre_override}

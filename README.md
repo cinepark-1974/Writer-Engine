@@ -1,13 +1,79 @@
-# 👖 BLUE JEANS Writer Engine v3.2.1
+# 👖 BLUE JEANS Writer Engine v3.7.1
 
-> **AI 시나리오 집필 엔진** — Creator Engine v2.4.0+ 산출물 → 100씬 영화 시나리오 자동 생성
+> **AI 시나리오 집필 엔진** — Creator Engine v2.6.0+ 산출물 → 100씬 영화 시나리오 자동 생성
 > BLUE JEANS PICTURES · [cinepark-1974](https://github.com/cinepark-1974)
 
 ---
 
 ## 한 줄 요약
 
-**19회 클릭으로 100씬 영화 시나리오를 쓰는 엔진.** 장르 드라이브 5점 + BJND 씬 강제 + 창작자 감성 3요소 + 엔딩 동적 분기 + 서브장르 OVERRIDE 3종 + Profession Pack 19직업 + Period Pack 10시대 + 대사 괄호 bold 해제 + 지문 자동 분단 + INSERT 시스템 11종 + PROP CONTINUITY 소품 추적 + **GENRE BOOSTER 12종 + HELPER CHARACTER RULE**로 **"장르 맛 + 작가의 서명 + 관객 신체 반응 + 직업 디테일 + 시대 고증 + 출판 가독성 + 물리 일관성 + 12개 장르 코어 DNA + 조력자 자립성"**을 모두 갖춘 시나리오를 생산한다.
+**19회 클릭으로 100씬 영화 시나리오를 쓰는 엔진.** v3.7.1은 **Creator Engine v2.6.0과 양방향 협력**으로 7점대 천장을 뚫는다. Creator가 기획 단계에서 **행동 사이클·Setup-Payoff·신체 대가 4단계·적대자 능동 행위**를 사전 설계하면, Writer가 비트 집필 시 받아서 검증·반영한다. 동시에 Writer는 **A28(행동 사이클 반복 차단)·A29(물리적 대가 에스컬레이션)** 룰로 자가 점검을 수행한다. 사전 방지 + 사후 감지의 이중 안전망이 작동한다.
+
+---
+
+## v3.7.1 주요 변경 (← v3.7.0) — Creator Engine v2.6.0 양방향 동기화
+
+| 신규 기능 | 설명 |
+|----------|------|
+| **Creator v2.6.0 4종 신규 필드 수신** | `cycle_design`, `setup_payoff_table`, `physical_cost_plan_text`, `antagonist_actions` 4종 데이터 + 비트별 `beat_v26_data` dict. Creator가 트리트먼트 단계에서 미리 설계한 사전 방지 데이터를 Writer가 비트 집필 시 system prompt에 직접 주입. |
+| **`_collect_treatment_beats()` 헬퍼 신규** | 트리트먼트 JSON 2가지 구조(`acts` 배열 / 평탄 `beats`) 모두 지원. 구버전 Creator JSON은 빈 리스트로 안전 fallback. |
+| **자동 경고 시스템** | 같은 외부 조력자 공간 3회+ 등장 시 "A28 변주 필수" 자동 표시. Setup만 있고 Payoff 없는 항목은 "회수 필요" 자동 표시. |
+| **2개 빌더 함수 시그니처 확장** | `build_write_beat_prompt`, `build_targeted_rewrite_prompt` 모두 5개 신규 keyword 파라미터 추가. 모두 default 있어서 구버전 호출 100% 호환. |
+| **v26_block_text 주입 블록** | 해당 비트의 4필드 + 작품 전체 컨텍스트를 system prompt에 직접 삽입. PAYOFF 비트면 "회수 비트" 명시, SETUP 비트면 "도입 비트" 명시, `physical_cost_stage ≥ 2`면 "이전 단계 흔적 함께 보여야 함" 강제. |
+| **사이드바 v3.7.1 상태 표시** | "🛡️ 사전 방지 (v3.7.1)" 블록으로 Creator v2.6.0 데이터 수신 여부와 비트 매핑 개수를 시각화. |
+| **하위 호환성 100%** | 구버전 Creator JSON(v2.5.x 이하)도 크래시 없이 작동. 신규 필드는 빈 문자열로 안전 fallback. main.py 기존 호출도 그대로 작동. |
+
+---
+
+## v3.7.0 주요 변경 (← v3.6.1) — 8점 진입 룰 신설
+
+| 신규 기능 | 설명 |
+|----------|------|
+| **A28: 행동 사이클 반복 차단** | A26(공간 카운트)과 달리, **3비트 행동 시퀀스 패턴 반복** 차단. 직전 2비트와 `[공간 순서 + 사건 기능]`이 같으면 반복으로 판정. 변주 4기법(순서 역전 / 압축 / 차단 / 침범) + 조력자 만남 일회성 원칙. |
+| **A29: 물리적 대가 에스컬레이션** | 주인공의 몸에 누적되는 4단계 대가. **타인의 대가는 대가가 아니다.** Beat 1~5(일시) → 6~8(가시) → 9~11(영구) → 12+(기능 손상). 이전 단계 흔적은 사라지지 않아야 함. 장르별 결 가이드 6종(호러/스릴러/액션/범죄/드라마/로맨스). |
+| **14번 지문 룰 체크리스트 확장** | "8점 진입 체크 ⑨/⑩" 항목 추가. 비트 집필 시 직접 점검. |
+| **18번 AI ESCAPE 룰 확장** | A1~A29로 자가 점검 범위 확대. 1개라도 해당되면 재집필. |
+| **2개 빌더 함수에 동시 적용** | `build_write_beat_prompt()` + `build_targeted_rewrite_prompt()` 양쪽에 모두 A28/A29 룰 통합. |
+
+**진단 근거**: Rewrite Engine으로 7점대 정체 작품(「바타비아 호러」 등) 분석 시 공통으로 발견된 2종 결함을 사전 차단.
+
+---
+
+## Creator-Writer 양방향 동기화 (v2.6.0 ↔ v3.7.1)
+
+### 업무 분장
+
+| 엔진 | 역할 | 작동 시점 |
+|------|------|----------|
+| **Creator Engine v2.6.0** | 사전 방지 — 기획 단계에서 4종 데이터 설계 | 트리트먼트 작성 시 |
+| **Writer Engine v3.7.1** | 사후 감지·교정 — 비트 집필 시 A28/A29 자가 점검 + Creator 데이터 검증 | 비트 집필·재집필 시 |
+
+### 데이터 흐름
+
+```
+Creator Engine v2.6.0
+   ↓ Treatment Build JSON 출력
+   ├─ cycle_design.beats_6_to_12          ───┐
+   ├─ external_helper_meetings              │
+   ├─ antagonist_actions (적대자별 비트)    │  Writer로 인계
+   ├─ setup_payoff_table                    │
+   └─ physical_cost_plan (4단계 비트 매핑)  ───┘
+        ↓ extract_from_creator_json()
+Writer Engine v3.7.1
+   ↓ build_write_beat_prompt() / build_targeted_rewrite_prompt()
+   ├─ 해당 비트의 v2.6.0 4필드 → system prompt 주입
+   ├─ 작품 전체 컨텍스트(4종 블록) → system prompt 주입
+   └─ A28/A29 자가 점검 (Creator 데이터 + Writer 룰 이중 작동)
+```
+
+### 검증된 효과 (바타비아 호러 사례)
+
+| 결함 | Creator v2.6.0 사전 방지 | Writer v3.7.1 사후 감지 |
+|------|-------------------------|------------------------|
+| Hendra 카페 3회 반복 | `action_cycle`에서 자동 경고 → 변주 강제 | A28 자가 점검으로 재집필 권고 |
+| Reza 수동 회피 | `antagonist_active_action` 비어 있음 즉시 발견 | (Writer 측 사후 감지) |
+| Pak Wiranto Payoff 누락 | `setup_payoff_table.status='회수 필요'` | (Writer 측 사후 감지) |
+| Maya 신체 대가 단편적 | `physical_cost_plan` 4단계 강제 작성 | A29 자가 점검 + 비트별 누적 검증 |
 
 ---
 
