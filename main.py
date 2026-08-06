@@ -17,6 +17,9 @@ from prompt import (
     build_targeted_rewrite_prompt,  # ★ v3.6.1 신규 — 특정 비트 재집필
     extract_from_creator_json,  # ★ v3.1 신규
     extract_genre_essence,       # ★ v3.6.0 신규 — 장르 본질 3중 선언 추출
+    # ★ v3.9.0 신규 — SCENE SEQUENCE LAYER
+    verify_scene_sequence_for_writer,
+    format_scene_sequence_report,
     ENGINE_VERSION,              # ★ v3.1
     ENGINE_BUILD_DATE,           # ★ v3.1
 )
@@ -727,6 +730,8 @@ for k, v in {
     "beats_history": {},  # ★ v3.6.1 — 비트별 재집필 히스토리 (최대 3개)
     "rewrite_reference_adjacent": True,  # ★ v3.6.1 — 인접 비트 참조 토글 (기본 ON)
     "beat_v26_data": {},  # ★ v3.7.1 — 비트 번호별 Creator v2.6.0 4필드
+    "confined_space": False,   # ★ v3.9.0 — 한정 공간 작품 (권역 정책 오버라이드)
+    "venue_hints_raw": "",     # ★ v3.9.0 — 작가 지정 권역 목록 (쉼표 구분 원문)
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -785,6 +790,8 @@ _BACKUP_KEYS = [
     "bjnd_data", "ending_payoff", "ending_payoff_type",
     # STEP 1 설정
     "genre", "fmt", "fact_based", "historical", "historical_type",
+    # ★ v3.9.0 — 씬 시퀀스 레이어 설정
+    "confined_space", "venue_hints_raw",
     # STEP 2 결과
     "plan_1막", "plan_2막", "plan_3막", "story_elements",
     # STEP 3 결과
@@ -2098,6 +2105,64 @@ with _hist_col2:
                  "퓨전: 시대 차용+자유 서사, 장르 재미 우선 (조선명탐정·전우치)"
         )
 
+# ══════════════════════════════════════════════════════════
+# ★ v3.9.0 — SCENE SEQUENCE 설정 (권역 정책)
+# ══════════════════════════════════════════════════════════
+_vc1, _vc2 = st.columns([2, 3])
+with _vc1:
+    st.session_state["confined_space"] = st.checkbox(
+        "한정 공간 작품 (권역 정책 오버라이드)",
+        value=st.session_state.get("confined_space", False),
+        help="한 건물·한 장소에서 대부분이 진행되는 작품일 때 체크합니다. "
+             "체크하면 장르 판정을 덮어쓰고 지배 권역 상한이 85%로 완화됩니다. "
+             "폰부스·큐브형 밀실물, 한 건물 침투 액션 등에 사용하세요."
+    )
+with _vc2:
+    st.session_state["venue_hints_raw"] = st.text_input(
+        "주요 권역 (쉼표 구분 · 비워두면 자동 추론)",
+        value=st.session_state.get("venue_hints_raw", ""),
+        placeholder="예: 선셋홀, 지수 법률사무소, 한강변",
+        help="권역 = 건물·구역 단위. '선셋홀 사무실'과 '선셋홀 복도'를 하나의 "
+             "권역 '선셋홀'로 묶어서 셉니다. 비워두면 씬 헤딩에서 자동 추론합니다."
+    )
+
+_vp_genre = st.session_state.get("genre", "")
+try:
+    import scene_sequence as _SSQ
+    _vp = _SSQ.resolve_venue_policy(
+        _vp_genre, confined=st.session_state.get("confined_space", False)
+    )
+    st.caption(
+        f"🗺️ 권역 정책 — **{_vp['label']}** · 지배 권역 상한 "
+        f"{_vp['max_share']*100:.0f}% / 연속 {_vp['max_run']}씬 / "
+        f"최소 권역 {_vp['min_venues']}개"
+        + (f" / 두 주인공 세계 교대 ON (소수 세계 {_vp['minor_share']*100:.0f}% 이상)"
+           if _vp["world_balance"] else "")
+    )
+except Exception:
+    st.caption("🗺️ 권역 정책 — scene_sequence.py 미배포 상태 (씬 시퀀스 레이어 비활성)")
+
+
+def _get_venue_hints():
+    """★ v3.9.0 — 작가 지정 권역 목록을 리스트로 변환. 비어 있으면 None."""
+    raw = st.session_state.get("venue_hints_raw", "") or ""
+    items = [x.strip() for x in raw.replace("/", ",").split(",") if x.strip()]
+    return items or None
+
+
+def _full_text_so_far():
+    """★ v3.9.0 — 지금까지 집필된 비트를 번호 순으로 이어붙인 전체 원고.
+
+    직전 씬 앵커가 '현재 권역에서 몇 씬 연속 체류 중인지'를 계산할 때 쓴다.
+    직전 비트 하나만 보면 비트 경계를 넘는 연속 체류를 셀 수 없다.
+    """
+    done = st.session_state.get("beats_done", {}) or {}
+    try:
+        keys = sorted(done.keys(), key=lambda x: int(x))
+    except (TypeError, ValueError):
+        keys = list(done.keys())
+    return "\n".join(str(done[k]) for k in keys if done.get(k))
+
 # API 상태
 if get_client():
     st.success(f"API 준비 완료 — 집필: {ANTHROPIC_MODEL_WRITE} · 구조: {ANTHROPIC_MODEL_PLAN}")
@@ -2137,6 +2202,9 @@ if has_material:
         fact_based=st.session_state.get("fact_based", False),
         historical=st.session_state.get("historical", False),
         historical_type=st.session_state.get("historical_type", "팩션"),
+        # ★ v3.9.0 — SCENE SEQUENCE LAYER
+        confined_space=st.session_state.get("confined_space", False),
+        venue_hints=_get_venue_hints(),
     )
 
     col_p1, col_p2, col_p3 = st.columns(3)
@@ -2388,6 +2456,10 @@ if plan_ready():
                     setup_payoff_table=st.session_state.get("setup_payoff_table", ""),
                     physical_cost_plan_text=st.session_state.get("physical_cost_plan_text", ""),
                     antagonist_actions=st.session_state.get("antagonist_actions", ""),
+                    # ★ v3.9.0 — SCENE SEQUENCE LAYER
+                    confined_space=st.session_state.get("confined_space", False),
+                    venue_hints=_get_venue_hints(),
+                    full_text_so_far=_full_text_so_far(),
                 )
                 
                 st.markdown(
@@ -2467,6 +2539,10 @@ if plan_ready():
             setup_payoff_table=st.session_state.get("setup_payoff_table", ""),
             physical_cost_plan_text=st.session_state.get("physical_cost_plan_text", ""),
             antagonist_actions=st.session_state.get("antagonist_actions", ""),
+            # ★ v3.9.0 — SCENE SEQUENCE LAYER
+            confined_space=st.session_state.get("confined_space", False),
+            venue_hints=_get_venue_hints(),
+            full_text_so_far=_full_text_so_far(),
         )
         st.markdown(f'<div class="beat-tag">Beat {cur} 집필 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=16000))
@@ -2522,6 +2598,10 @@ if plan_ready():
             setup_payoff_table=st.session_state.get("setup_payoff_table", ""),
             physical_cost_plan_text=st.session_state.get("physical_cost_plan_text", ""),
             antagonist_actions=st.session_state.get("antagonist_actions", ""),
+            # ★ v3.9.0 — SCENE SEQUENCE LAYER
+            confined_space=st.session_state.get("confined_space", False),
+            venue_hints=_get_venue_hints(),
+            full_text_so_far=_full_text_so_far(),
         )
         st.markdown(f'<div class="beat-tag">Beat {last_beat} 다시 쓰는 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=16000))
@@ -2529,6 +2609,52 @@ if plan_ready():
         st.session_state["beats_done"][last_beat] = result
         st.success(f"✅ Beat {last_beat} 재집필 완료. 마음에 들지 않으면 비트 영역에서 ↩️ 되돌리기 가능.")
         st.rerun()
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.9.0 신규 — SCENE SEQUENCE 검증 패널
+# 파이썬이 원고를 직접 파싱해 권역·시간대 위반을 검출한다.
+# AI에게 세라고 시키지 않는다 — 세는 주체와 어기는 주체가 같으면 안 되므로.
+# ═══════════════════════════════════════════════════════════
+if st.session_state.get("beats_done"):
+    st.markdown(
+        '<div class="section-header">🗺️ 씬 시퀀스 검증 '
+        '<span class="en">SCENE SEQUENCE · VENUE &amp; TIME CONTINUITY</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    _ss_col1, _ss_col2 = st.columns([1, 3])
+    with _ss_col1:
+        _run_verify = st.button("검증 실행", use_container_width=True)
+    with _ss_col2:
+        st.caption(
+            "지금까지 집필된 비트 전체를 파싱해 "
+            "권역 연속 체류·시간대 역행·시간대 단일화·괄호 부기·씬 번호 중복·"
+            "권역 점유율 6종을 검사합니다. 임계값은 장르에서 자동으로 결정됩니다."
+        )
+
+    if _run_verify:
+        _full = _full_text_so_far()
+        if not _full.strip():
+            st.info("집필된 비트가 없습니다.")
+        else:
+            _rep = verify_scene_sequence_for_writer(
+                _full,
+                genre=st.session_state.get("genre", ""),
+                confined_space=st.session_state.get("confined_space", False),
+                venue_hints=_get_venue_hints(),
+            )
+            if not _rep.get("available"):
+                st.warning(
+                    "scene_sequence.py가 배포되지 않았습니다. "
+                    "GitHub 리포지토리에 파일을 추가한 뒤 다시 시도하세요."
+                )
+            else:
+                _v_total = sum(len(x) for x in _rep.get("violations", {}).values())
+                if _v_total == 0:
+                    st.success(f"✅ 위반 없음 — {_rep.get('total', 0)}씬 검사 완료")
+                else:
+                    st.error(f"⚠️ 위반 {_v_total}건 검출 — {_rep.get('total', 0)}씬 검사")
+                st.markdown(format_scene_sequence_report(_rep))
 
 # ═══════════════════════════════════════════════════════════
 # DOWNLOAD — TXT + DOCX (수시 저장)

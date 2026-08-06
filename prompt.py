@@ -1,7 +1,83 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v3.8.2
+# BLUE JEANS SCREENPLAY WRITER ENGINE v3.9.0
 # prompt.py — Full Version (Creator Engine v2.6.1 동기화)
 # © 2026 BLUE JEANS PICTURES
+#
+# v3.9.0 주요 변경사항 (2026-08-06):
+# - SCENE SEQUENCE LAYER 신설 — 비트와 씬 사이의 빈 층을 채운다
+#   * Mr. MOON 진단: "Writer Engine에 씬 순서 설계가 없다. 15비트를 순서대로
+#     완결시키며 쓰다 보니 한 비트 안의 사건이 같은 공간에서 벌어지면 그 공간이
+#     그대로 뭉친다. 비트 단위로는 정확한데 비트 사이의 교대가 설계되지 않는다.
+#     공간 교대·시점 교대·두 주인공 세계의 병렬 제시는 비트 레벨이 아니라
+#     씬 시퀀스 레벨의 판단인데 그 층이 비어 있다. 시간대 연속성 검증도 없다."
+#   * Mr. MOON 추가 진단 1: "권역이 한 군데면 공포영화가 아닌 이상 문제가
+#     생긴다. 그래서 장르규칙이 제일 중요하다."
+#   * Mr. MOON 추가 진단 2: "로맨틱 코미디면 주인공이 티키타카 하면서
+#     캐릭터 셋업이 1막에 설치되어야 하지 않을까?"
+#
+# - scene_sequence.py 신규 모듈 (Scene Sequence Pack v1.0.0)
+#   * period_pack / profession_pack과 동일한 사이드카 모듈 패턴.
+#     prompt.py를 import 하지 않아 순환 참조가 없고, 파일 부재 시 조용히 폴백.
+#   * 장르 판별 키워드는 prompt.py _is_* 함수군과 동기화 유지 필요.
+#
+# - 핵심 설계 전환 — 검증 주체를 AI에서 파이썬으로 이관
+#   * 기존 v3.5 공간 분산 룰은 AI에게 "세어보라"고 지시하는 구조였다.
+#     '연애.결혼' 100씬 실측 결과, AI가 하위 공간(선셋홀 사무실 / 선셋홀 복도 /
+#     선셋홀 로비 / 선셋홀 소회의실)을 서로 다른 장소로 세어 규칙을 통과했다고
+#     자가 선언했다. 실제 권역 점유율은 75%(로코 상한 35%).
+#   * 세는 주체와 어기는 주체가 같으면 검증이 성립하지 않는다.
+#     v3.9.0부터 파이썬이 파싱·계산하고 결론만 프롬프트에 주입한다.
+#
+# - VENUE(권역) 개념 도입 — 판정 단위를 '장소'에서 '건물·구역'으로 격상
+#   * normalize_venue()가 하위 공간 어휘(사무실·복도·로비·소회의실·골목 등)를
+#     제거해 같은 권역으로 묶는다. 하위 공간 쪼개기 우회 차단.
+#
+# - VENUE_POLICY_TABLE — 장르별 권역 정책 (장르규칙 최우선)
+#   * 한정공간 85% / 호러 70% / 재난 60% / 성장물·사극·코미디 45% /
+#     드라마 40% / 로코·버디·미스터리·범죄·SF 35% / 액션 30%
+#   * 같은 수치가 호러에서는 장르 문법이고 로코에서는 결함이다.
+#   * 스크루볼은 권역 정책만 코미디(45%)를 따르고 1막 셋업은 로코를 따른다.
+#   * 한정공간은 STEP 1 체크박스로 수동 지정 — 장르 판정을 덮어쓴다.
+#
+# - 두 주인공 세계 병렬 제시 강제 (로코·로맨스·버디 한정)
+#   * 소수 세계 최소 25% + 막별 단독 씬 쿼터(1막 3 / 2막 4 / 3막 2).
+#   * 상대역이 Creator에서 antagonist로 태깅되어도 공동 주인공으로 처리.
+#     '연애.결혼'의 한지수가 role=antagonist로 분류되어 자기 세계 없이
+#     민준의 공간에 방문하는 인물로만 존재한 사례를 차단.
+#
+# - 1막 셋업 강제 (ACT1_ROMCOM / ACT1_BUDDY / ACT1_ROMANCE / ACT1_GENERIC)
+#   * 로코: 미트큐트 이전 각자 세계 단독 셋업 2씬씩 / 미트큐트 Beat 2~4 /
+#     1막 티키타카 2씬(6회 교대 이상) / 1막 종료 6항목 체크.
+#
+# - TIKITAKA_BEAT_RULE — 로코·버디·스크루볼 전 비트 적용
+#   * 티키타카 3조건(말버릇 대비 / 받아치기 / 판돈) + 정보 전진 원칙.
+#
+# - 시간대 연속성 검증 — 직전 씬 앵커 구조화 주입
+#   * 기존 previous_scene_text는 직전 비트 원문 뒤 2,500자를 던지고
+#     "연속성 유지"라고만 적어, 모델이 그 안에서 헤딩을 찾아 읽기를 기대했다.
+#     v3.9.0은 파이썬이 직전 씬 헤딩을 파싱해 권역·시간대·연속 체류 수를
+#     명시 주입하고, 허용 시간대 목록까지 열거한다.
+#
+# - 위반 6종 검출기 verify_scene_sequence()
+#   * V1 권역 연속 체류 초과 / V2 시간대 역행 / V3 시간대 단일화 /
+#     V4 괄호 부기(씬 분리 우회) / V5 씬 번호 중복·결번 / V6 권역 점유율·다양성
+#   * '연애.결혼' 실측: V6 1건 · V1 6건 · V2 6건 · V3 5건 · V4 5건 · V5 1건.
+#
+# - 신규 래퍼 4종 (scene_sequence.py 부재 시 전부 빈 문자열 폴백)
+#   * build_scene_sequence_plan_block_for_writer()
+#   * build_scene_sequence_beat_block_for_writer()
+#   * verify_scene_sequence_for_writer()
+#   * format_scene_sequence_report()
+#
+# - 시그니처 확장 (전부 기본값 있는 keyword 파라미터 — 구버전 호출 100% 호환)
+#   * build_scene_plan_prompt: confined_space, venue_hints
+#   * build_write_beat_prompt: confined_space, venue_hints, full_text_so_far
+#   * build_targeted_rewrite_prompt: 동일 3종
+#
+# - main.py: STEP 1에 한정공간 체크박스·권역 입력 추가,
+#   STEP 3 하단에 「씬 시퀀스 검증」 패널 신설.
+#
+# ─────────────────────────────────────────────────────────────
 #
 # v3.8.2 주요 변경사항 (2026-06-20):
 # - A31 신설 — 첫 등장 괄호 정보 제한 ((나이대, 성별)만 허용)
@@ -352,8 +428,8 @@
 # - Creator JSON 자동 로더
 # ─────────────────────────────────────────────────────────────
 
-ENGINE_VERSION = "v3.8.2"
-ENGINE_BUILD_DATE = "2026-06-20"
+ENGINE_VERSION = "v3.9.0"
+ENGINE_BUILD_DATE = "2026-08-06"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -6654,6 +6730,126 @@ def get_genre_enforcement(genre: str) -> str:
 # 1. SCENE PLAN — 막별 분할 생성
 # ═══════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════
+# ★ v3.9.0 신규 — SCENE SEQUENCE LAYER 래퍼
+# scene_sequence.py(Scene Sequence Pack)를 지연 import 해서 사용한다.
+# period_pack / profession_pack과 동일한 사이드카 패턴 —
+# 파일이 없어도 크래시 없이 빈 문자열로 폴백한다 (하위 호환).
+# ═══════════════════════════════════════════════════════════
+
+def build_scene_sequence_plan_block_for_writer(
+    genre: str,
+    act: str = "",
+    confined_space: bool = False,
+    venue_hints: list = None,
+) -> str:
+    """씬 플랜 프롬프트용 씬 시퀀스 블록.
+
+    장르별 권역(VENUE) 정책 + 비트 경계 교대 + 시간대 연속성 규칙,
+    그리고 1막이면 장르별 1막 셋업 규칙(로코 티키타카 포함)을 반환한다.
+
+    Returns:
+        str: 주입할 블록. scene_sequence.py 부재 시 빈 문자열.
+    """
+    try:
+        import scene_sequence as SSQ
+    except ImportError:
+        return ""
+    except Exception:
+        return ""
+    try:
+        return SSQ.build_scene_sequence_plan_block(
+            genre=genre or "",
+            act=act or "",
+            confined=bool(confined_space),
+            venue_hints=venue_hints or None,
+        )
+    except Exception:
+        return ""
+
+
+def build_scene_sequence_beat_block_for_writer(
+    genre: str,
+    beat_number: int,
+    previous_scene_text: str = "",
+    confined_space: bool = False,
+    venue_hints: list = None,
+    full_text_so_far: str = "",
+) -> str:
+    """비트 집필 프롬프트용 씬 시퀀스 블록.
+
+    직전 씬 앵커(권역·시간대·연속 체류 수를 파이썬이 파싱해 명시 주입)
+    + 1막이면 1막 셋업 규칙 + 로코/버디면 티키타카 규칙.
+
+    Returns:
+        str: 주입할 블록. scene_sequence.py 부재 시 빈 문자열.
+    """
+    try:
+        import scene_sequence as SSQ
+    except ImportError:
+        return ""
+    except Exception:
+        return ""
+    try:
+        return SSQ.build_scene_sequence_beat_block(
+            genre=genre or "",
+            beat_number=beat_number,
+            previous_scene_text=previous_scene_text or "",
+            confined=bool(confined_space),
+            venue_hints=venue_hints or None,
+            full_text_so_far=full_text_so_far or "",
+        )
+    except Exception:
+        return ""
+
+
+def verify_scene_sequence_for_writer(
+    full_text: str,
+    genre: str = "",
+    confined_space: bool = False,
+    venue_hints: list = None,
+) -> dict:
+    """완성 원고(또는 진행 중 원고)의 씬 시퀀스 위반을 검출한다.
+
+    V1 권역 연속 체류 / V2 시간대 역행 / V3 시간대 단일화 /
+    V4 괄호 부기 / V5 씬 번호 중복·결번 / V6 권역 점유율·다양성
+
+    Returns:
+        dict: verify 결과. scene_sequence.py 부재 시 available=False.
+    """
+    try:
+        import scene_sequence as SSQ
+    except ImportError:
+        return {"available": False, "ok": True, "total": 0,
+                "venues": [], "violations": {}}
+    except Exception:
+        return {"available": False, "ok": True, "total": 0,
+                "venues": [], "violations": {}}
+    try:
+        rep = SSQ.verify_scene_sequence(
+            full_text or "",
+            genre=genre or "",
+            confined=bool(confined_space),
+            venue_hints=venue_hints or None,
+        )
+        rep["available"] = True
+        return rep
+    except Exception:
+        return {"available": False, "ok": True, "total": 0,
+                "venues": [], "violations": {}}
+
+
+def format_scene_sequence_report(report: dict) -> str:
+    """verify_scene_sequence_for_writer() 결과를 마크다운 리포트로 변환."""
+    if not report or not report.get("available"):
+        return "씬 시퀀스 모듈(scene_sequence.py)을 찾을 수 없습니다."
+    try:
+        import scene_sequence as SSQ
+        return SSQ.format_verify_report(report)
+    except Exception:
+        return "씬 시퀀스 리포트 생성에 실패했습니다."
+
+
 def build_scene_plan_prompt(
     act: str,
     genre: str, fmt: str,
@@ -6665,12 +6861,22 @@ def build_scene_plan_prompt(
     fact_based: bool = False,
     historical: bool = False,
     historical_type: str = "",
+    # ★ v3.9.0 신규 — SCENE SEQUENCE LAYER (기본값 있어 구버전 호출 호환)
+    confined_space: bool = False,
+    venue_hints: list = None,
 ) -> str:
     gr = _genre_text(genre)
     beats = ACT_BEATS[act]
     target = ACT_SCENE_TARGETS[act]
     fact_based_block = get_fact_based_rules(fact_based)
     historical_block = get_historical_film_rules(historical, historical_type)
+
+    # ★ v3.9.0 — 장르별 권역 정책 + 비트 경계 교대 + 시간대 규칙
+    #   (1막이면 장르별 1막 셋업 규칙까지 함께 반환)
+    scene_seq_block = build_scene_sequence_plan_block_for_writer(
+        genre=genre, act=act,
+        confined_space=confined_space, venue_hints=venue_hints,
+    )
 
     # 1막 씬 플랜에만 OPENING MASTERY 주입 (2막/3막에는 불필요)
     opening_plan_block = ""
@@ -6894,7 +7100,10 @@ def build_scene_plan_prompt(
      S#4: 우엉 → S#5: 시장 → S#6: 골목 → S#7: 유진 집 부엌 → S#8: 우엉
      (이동 동선이 자연스럽고 세계가 확장됨)
 
+{scene_seq_block}
 
+★ 위 v3.9.0 권역(VENUE) 정책은 규칙 10의 상위 판정이다. ★
+★ 규칙 10은 '장소' 단위, v3.9.0은 '권역' 단위로 센다. 둘이 충돌하면 권역이 이긴다. ★
 
 11. 씬 길이 변주:
    - 긴 씬(2~3분, 대사 4개+) 과 짧은 씬(30초, 이미지 1개)을 교차하라.
@@ -7157,6 +7366,13 @@ def build_write_beat_prompt(
     setup_payoff_table: str = "",     # ★ v3.7.1 — 작품 전체 Setup-Payoff 테이블
     physical_cost_plan_text: str = "", # ★ v3.7.1 — 주인공 4단계 대가 계획
     antagonist_actions: str = "",     # ★ v3.7.1 — 비트별 적대자 능동 행위 매핑
+    # ═══════════════════════════════════════════════════════════
+    # ★ v3.9.0 신규 — SCENE SEQUENCE LAYER
+    # 모두 기본값 있어서 구버전 호출 100% 호환
+    # ═══════════════════════════════════════════════════════════
+    confined_space: bool = False,     # ★ v3.9.0 — 한정 공간 작품 수동 지정
+    venue_hints: list = None,         # ★ v3.9.0 — 작가 지정 권역 목록
+    full_text_so_far: str = "",       # ★ v3.9.0 — 지금까지 집필된 전체 원고
 ) -> str:
     gr = _genre_text(genre)
     genre_override = get_genre_override(genre)
@@ -7266,6 +7482,22 @@ def build_write_beat_prompt(
                 "→ 위치를 변경하려면 반드시 캐릭터의 명시적 행동을 씬에 포함하라.\n"
                 "→ 새 씬 끝에도 [소품 상태 / S#N 종료 시점] 메모를 동일 형식으로 작성하라.\n"
             )
+
+    # ────────────────────────────────────────────────
+    # ★ v3.9.0 신규 블록 — SCENE SEQUENCE LAYER
+    # 직전 씬 앵커(권역·시간대·연속 체류 수)를 파이썬이 파싱해 명시 주입.
+    # + 1막(Beat 1~5)이면 장르별 1막 셋업 규칙
+    # + 로코·버디·스크루볼이면 티키타카 규칙 (전 비트)
+    # scene_sequence.py 부재 시 빈 문자열 → 프롬프트 변화 없음 (하위 호환)
+    # ────────────────────────────────────────────────
+    scene_seq_block = build_scene_sequence_beat_block_for_writer(
+        genre=genre,
+        beat_number=beat_number,
+        previous_scene_text=previous_scene_text,
+        confined_space=confined_space,
+        venue_hints=venue_hints,
+        full_text_so_far=full_text_so_far,
+    )
 
     # ────────────────────────────────────────────────
     # ★ v3.1 신규 블록 — 모든 비트에 주입
@@ -7713,6 +7945,7 @@ AI가 자주 저지르는 엔딩 실수:
 
 {f"[톤 문서]{chr(10)}{tone_block}" if tone_block else ""}
 {prev_block}
+{scene_seq_block}
 {fact_based_block}
 {historical_block}
 {f"[⚡ 핵심 요소 — 반드시 반영. 누락 시 실패.]{chr(10)}{story_elements}" if story_elements else ""}
@@ -8096,6 +8329,10 @@ def build_targeted_rewrite_prompt(
     setup_payoff_table: str = "",
     physical_cost_plan_text: str = "",
     antagonist_actions: str = "",
+    # ★ v3.9.0 신규 — SCENE SEQUENCE LAYER (기본값 있어 구버전 호출 호환)
+    confined_space: bool = False,
+    venue_hints: list = None,
+    full_text_so_far: str = "",
 ) -> str:
     """
     특정 비트를 재집필한다 — Rewrite/Revise 전 작가가 손보는 단계.
@@ -8260,6 +8497,17 @@ def build_targeted_rewrite_prompt(
         else A30_DIRECTION_REPETITION_BLOCK
     )
 
+    # ★ v3.9.0 — SCENE SEQUENCE LAYER (재집필에도 동일 안전망)
+    #   직전 씬 앵커 + 1막 셋업 + 티키타카
+    scene_seq_block_tr = build_scene_sequence_beat_block_for_writer(
+        genre=genre,
+        beat_number=beat_number,
+        previous_scene_text=previous_beat_text,
+        confined_space=confined_space,
+        venue_hints=venue_hints,
+        full_text_so_far=full_text_so_far,
+    )
+
     return f"""
 [TASK] Beat {beat_number} 재집필 — {beat_info.get('name', '')} ({beat_info.get('act', '')})
 {beat_info.get('desc', '')}
@@ -8326,6 +8574,8 @@ def build_targeted_rewrite_prompt(
      이전 비트의 흔적이 이 비트에서도 보여야 한다 (리셋 금지).
 
 {a30_block_tr}
+
+{scene_seq_block_tr}
 
 [OUTPUT FORMAT]
 재집필된 시나리오 본문만 출력.
