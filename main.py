@@ -20,6 +20,10 @@ from prompt import (
     # ★ v3.9.0 신규 — SCENE SEQUENCE LAYER
     verify_scene_sequence_for_writer,
     format_scene_sequence_report,
+    # ★ v3.10.0 신규 — SCENE SEQUENCE 처방 레이어
+    build_fix_plan_for_writer,
+    build_violation_fix_instruction_for_writer,
+    renumber_scenes_for_writer,
     ENGINE_VERSION,              # ★ v3.1
     ENGINE_BUILD_DATE,           # ★ v3.1
 )
@@ -2611,6 +2615,79 @@ if plan_ready():
         st.rerun()
 
 # ═══════════════════════════════════════════════════════════
+# ★ v3.10.0 신규 — 위반 보완 재집필 실행기
+# 자동 생성된 위반 지시문을 user_instruction으로 주입해 해당 비트만 다시 쓴다.
+# 일괄 처리는 하지 않는다 — 한 비트를 고치면 앞뒤 비트의 시간·공간이
+# 함께 흔들리므로 한 건씩 확인하고 넘어가야 한다.
+# ═══════════════════════════════════════════════════════════
+
+def _run_violation_fix(b_no: int, instruction: str,
+                       ref_adjacent: bool = True) -> None:
+    _done = st.session_state.get("beats_done", {})
+    if b_no not in _done:
+        st.warning(f"Beat {b_no}의 원고가 없습니다.")
+        return
+
+    # 되돌리기용 자동 백업 (기존 ↩️ 버튼으로 복원 가능)
+    push_beat_history(b_no, _done[b_no])
+
+    _prev = _done.get(b_no - 1, "") if ref_adjacent else ""
+    _next = _done.get(b_no + 1, "") if ref_adjacent else ""
+
+    _essence = st.session_state.get("genre_essence")
+    if not _essence or not _essence.get("absolute_goal"):
+        _essence = extract_genre_essence({}, genre_fallback=genre)
+
+    _prompt = build_targeted_rewrite_prompt(
+        genre=genre,
+        beat_number=b_no,
+        current_text=_done[b_no],
+        scene_plan=full_plan(),
+        characters=st.session_state.get("characters", ""),
+        treatment=st.session_state.get("treatment", ""),
+        tone=st.session_state.get("tone", ""),
+        previous_beat_text=_prev,
+        next_beat_text=_next,
+        logline=st.session_state.get("logline", ""),
+        world=st.session_state.get("world", ""),
+        story_elements=st.session_state.get("story_elements", ""),
+        opening_strategy=st.session_state.get("opening_strategy", ""),
+        bjnd_data=st.session_state.get("bjnd_data", ""),
+        ending_payoff=st.session_state.get("ending_payoff", ""),
+        ending_payoff_type=st.session_state.get("ending_payoff_type", ""),
+        fact_based=st.session_state.get("fact_based", False),
+        historical=st.session_state.get("historical", False),
+        historical_type=st.session_state.get("historical_type", "팩션"),
+        genre_essence=_essence,
+        user_instruction=instruction,
+        reference_adjacent=ref_adjacent,
+        beat_v26_data=st.session_state.get("beat_v26_data", {}).get(b_no, {}),
+        cycle_design=st.session_state.get("cycle_design", ""),
+        setup_payoff_table=st.session_state.get("setup_payoff_table", ""),
+        physical_cost_plan_text=st.session_state.get("physical_cost_plan_text", ""),
+        antagonist_actions=st.session_state.get("antagonist_actions", ""),
+        confined_space=st.session_state.get("confined_space", False),
+        venue_hints=_get_venue_hints(),
+        full_text_so_far=_full_text_so_far(),
+    )
+
+    st.markdown(
+        f'<div class="beat-tag">Beat {b_no} 위반 보완 재집필 중…</div>',
+        unsafe_allow_html=True,
+    )
+    _result = st.write_stream(stream_ai(_prompt, tokens=16000))
+    _result = _strip_prop_state_memos(_result)
+    st.session_state["beats_done"][b_no] = _result
+    st.session_state["ss_report_stale"] = True
+    st.success(
+        f"✅ Beat {b_no} 보완 완료. 결과가 마음에 들지 않으면 "
+        f"STEP 2의 Beat {b_no} 영역에서 ↩️ 되돌리기로 복원하세요. "
+        f"다음 비트로 넘어가기 전에 재검증을 권합니다."
+    )
+    st.rerun()
+
+
+# ═══════════════════════════════════════════════════════════
 # ★ v3.9.0 신규 — SCENE SEQUENCE 검증 패널
 # 파이썬이 원고를 직접 파싱해 권역·시간대 위반을 검출한다.
 # AI에게 세라고 시키지 않는다 — 세는 주체와 어기는 주체가 같으면 안 되므로.
@@ -2636,25 +2713,220 @@ if st.session_state.get("beats_done"):
         _full = _full_text_so_far()
         if not _full.strip():
             st.info("집필된 비트가 없습니다.")
+            st.session_state["ss_report"] = None
         else:
-            _rep = verify_scene_sequence_for_writer(
+            st.session_state["ss_report"] = verify_scene_sequence_for_writer(
                 _full,
                 genre=st.session_state.get("genre", ""),
                 confined_space=st.session_state.get("confined_space", False),
                 venue_hints=_get_venue_hints(),
             )
-            if not _rep.get("available"):
-                st.warning(
-                    "scene_sequence.py가 배포되지 않았습니다. "
-                    "GitHub 리포지토리에 파일을 추가한 뒤 다시 시도하세요."
-                )
+            # 검증 시점 기준 — 이후 원고를 고치면 stale로 표시된다
+            st.session_state["ss_report_stale"] = False
+
+    # ★ v3.10.0 — 검증 결과를 세션에 보관해 버튼 조작 후에도 유지한다
+    _rep = st.session_state.get("ss_report")
+    if _rep:
+        if not _rep.get("available"):
+            st.warning(
+                "scene_sequence.py가 배포되지 않았습니다. "
+                "GitHub 리포지토리에 파일을 추가한 뒤 다시 시도하세요."
+            )
+        else:
+            _v_total = sum(len(x) for x in _rep.get("violations", {}).values())
+            if _v_total == 0:
+                st.success(f"✅ 위반 없음 — {_rep.get('total', 0)}씬 검사 완료")
             else:
-                _v_total = sum(len(x) for x in _rep.get("violations", {}).values())
-                if _v_total == 0:
-                    st.success(f"✅ 위반 없음 — {_rep.get('total', 0)}씬 검사 완료")
-                else:
-                    st.error(f"⚠️ 위반 {_v_total}건 검출 — {_rep.get('total', 0)}씬 검사")
-                st.markdown(format_scene_sequence_report(_rep))
+                st.error(f"⚠️ 위반 {_v_total}건 검출 — {_rep.get('total', 0)}씬 검사")
+            st.markdown(format_scene_sequence_report(_rep))
+
+            # ═══════════════════════════════════════════════
+            # ★ v3.10.0 신규 — 처방 영역 「다음 작업 순서」
+            # 진단만 주고 끝내면 작가는 무엇부터 손댈지 알 수 없다.
+            # 위반을 형식·국소·구조로 나눠 번호 순서와 버튼을 함께 제시한다.
+            # ═══════════════════════════════════════════════
+            _plan = build_fix_plan_for_writer(
+                _rep,
+                st.session_state.get("beats_done", {}),
+                venue_hints=_get_venue_hints(),
+            )
+
+            if _plan.get("available") and _plan.get("steps"):
+                st.markdown(
+                    '<div class="section-header">📋 다음 작업 순서 '
+                    '<span class="en">FIX PLAN · STEP BY STEP</span></div>',
+                    unsafe_allow_html=True,
+                )
+                if st.session_state.get("ss_report_stale"):
+                    st.warning(
+                        "원고가 수정된 상태입니다. 아래 순서는 마지막 검증 시점 기준이므로 "
+                        "위 [검증 실행]을 다시 눌러 갱신하세요."
+                    )
+
+                # 2단계에 이미 잡힌 비트 — 3단계 중복 안내용
+                _local_beats = set()
+                for _stp in _plan["steps"]:
+                    if _stp.get("kind") == "local":
+                        for _bb in _stp.get("beats", []):
+                            _local_beats.add(int(_bb["beat"]))
+
+                for _stp in _plan["steps"]:
+                    _o = _stp.get("order")
+                    _kind = _stp.get("kind")
+
+                    # ── 1단계 유형 · 형식 위반 (V5) — 파이썬 자동 처리
+                    if _kind == "format":
+                        st.markdown(
+                            f"**{_o}단계 · 씬 번호 정리** — V5 {_stp.get('count', 0)}건"
+                        )
+                        for _it in _stp.get("items", []):
+                            st.caption(f"· {_it['msg']}")
+                        st.caption(_stp.get("note", ""))
+                        _rn_log = st.session_state.get("ss_renumber_log") or []
+                        if _rn_log:
+                            with st.expander(
+                                f"직전 재정렬 내역 {len(_rn_log)}건 보기", expanded=False
+                            ):
+                                st.text("\n".join(_rn_log[:300]))
+                        _renum_btn = st.button(
+                            "🔢 씬 번호 자동 재정렬 (AI 호출 없음)",
+                            key="fix_renumber_btn",
+                        )
+                        if _renum_btn:
+                            _new_beats, _log = renumber_scenes_for_writer(
+                                st.session_state.get("beats_done", {})
+                            )
+                            if _log:
+                                st.session_state["beats_done"] = _new_beats
+                                st.session_state["ss_renumber_log"] = _log
+                                # 번호가 바뀌면 기존 리포트의 씬 참조가 전부 무효해진다.
+                                # 파이썬 검증은 비용이 없으므로 즉시 재검증해 갱신한다.
+                                st.session_state["ss_report"] = \
+                                    verify_scene_sequence_for_writer(
+                                        _full_text_so_far(),
+                                        genre=st.session_state.get("genre", ""),
+                                        confined_space=st.session_state.get(
+                                            "confined_space", False),
+                                        venue_hints=_get_venue_hints(),
+                                    )
+                                st.session_state["ss_report_stale"] = False
+                                st.success(
+                                    f"✅ 씬 번호 {len(_log)}건 재정렬 완료 — "
+                                    f"검증 결과를 자동 갱신했습니다."
+                                )
+                                st.rerun()
+                            else:
+                                st.info("재정렬할 씬 번호가 없습니다.")
+                        st.markdown("")
+
+                    # ── 2단계 유형 · 국소 위반 (V1~V4) — 비트별 순차 재집필
+                    elif _kind == "local":
+                        st.markdown(
+                            f"**{_o}단계 · 국소 위반 보완** — "
+                            f"{_stp.get('count', 0)}건 · 대상 비트 "
+                            f"{len(_stp.get('beats', []))}개"
+                        )
+                        st.caption(_stp.get("note", ""))
+                        for _bb in _stp.get("beats", []):
+                            _b = int(_bb["beat"])
+                            _binfo = BEATS_15[_b - 1] if 1 <= _b <= 15 else {"name": ""}
+                            with st.container():
+                                st.markdown(
+                                    f"　**Beat {_b}. {_binfo.get('name', '')}** "
+                                    f"— 위반 {len(_bb['items'])}건"
+                                )
+                                for _it in _bb["items"]:
+                                    st.caption(f"　· [{_it['code']}] {_it['msg']}")
+                                _inst = build_violation_fix_instruction_for_writer(
+                                    _rep, _b,
+                                    st.session_state.get("beats_done", {}),
+                                    plan=_plan,
+                                    venue_hints=_get_venue_hints(),
+                                )
+                                _fc1, _fc2 = st.columns([2, 3])
+                                with _fc1:
+                                    _fix_btn = st.button(
+                                        f"🔧 Beat {_b} 위반 보완 재집필",
+                                        key=f"fix_local_btn_b{_b}",
+                                        use_container_width=True,
+                                    )
+                                with _fc2:
+                                    with st.expander("자동 생성된 지시문 보기", expanded=False):
+                                        st.text(_inst or "(생성된 지시문 없음)")
+                                if _fix_btn and _inst:
+                                    _run_violation_fix(_b, _inst)
+                        for _um in _stp.get("unmapped", []):
+                            st.caption(
+                                f"　· [{_um['code']}] {_um['msg']} "
+                                f"— 비트 환산 실패 (씬 번호 표기 없음). 수동 확인 필요"
+                            )
+                        st.markdown("")
+
+                    # ── 3단계 유형 · 구조 위반 (V6) — 권역 재배치
+                    elif _kind == "structural":
+                        st.markdown(f"**{_o}단계 · 권역 재배치** — V6 {_stp.get('count', 0)}건")
+                        for _it in _stp.get("items", []):
+                            st.caption(f"· {_it['msg']}")
+                        _alt = _stp.get("alt_venues", [])
+                        st.caption(
+                            f"지배 권역 '{_stp.get('dominant_venue', '')}' · "
+                            f"이전 필요 약 {_stp.get('move_need', 0)}씬 · "
+                            f"대체 권역 후보: {' / '.join(_alt[:5]) if _alt else '없음'}"
+                        )
+                        st.caption(_stp.get("note", ""))
+                        for _tg in _stp.get("targets", []):
+                            _b = int(_tg["beat"])
+                            _binfo = BEATS_15[_b - 1] if 1 <= _b <= 15 else {"name": ""}
+                            st.markdown(
+                                f"　**Beat {_b}. {_binfo.get('name', '')}** — "
+                                f"이전 할당 {_tg['quota']}씬 "
+                                f"(이 비트의 지배 권역 씬 {_tg['dominant_scenes']}/"
+                                f"{_tg['beat_scenes']})"
+                            )
+                            if _b in _local_beats:
+                                st.caption(
+                                    "　· 이 비트는 2단계에도 포함되어 있습니다. "
+                                    "지시문에 양쪽이 함께 담기므로 한 번만 실행하면 됩니다."
+                                )
+                                continue
+                            _inst_v = build_violation_fix_instruction_for_writer(
+                                _rep, _b,
+                                st.session_state.get("beats_done", {}),
+                                plan=_plan,
+                                venue_hints=_get_venue_hints(),
+                            )
+                            _vc1, _vc2 = st.columns([2, 3])
+                            with _vc1:
+                                _vfix_btn = st.button(
+                                    f"🔧 Beat {_b} 권역 이전 재집필",
+                                    key=f"fix_venue_btn_b{_b}",
+                                    use_container_width=True,
+                                )
+                            with _vc2:
+                                with st.expander("자동 생성된 지시문 보기", expanded=False):
+                                    st.text(_inst_v or "(생성된 지시문 없음)")
+                            if _vfix_btn and _inst_v:
+                                _run_violation_fix(_b, _inst_v)
+                        if _stp.get("remain_after_plan", 0) > 0:
+                            st.warning(
+                                f"위 배분으로도 약 {_stp['remain_after_plan']}씬이 남습니다. "
+                                "비트 재집필의 한계이므로 씬 플랜 층위에서 다시 설계하는 편이 "
+                                "정확합니다."
+                            )
+                        st.markdown("")
+
+                    # ── 4단계 유형 · 재검증
+                    elif _kind == "reverify":
+                        st.markdown(f"**{_o}단계 · 재검증**")
+                        st.caption(_stp.get("note", ""))
+                        st.caption("위쪽 [검증 실행] 버튼을 다시 누르세요.")
+                        st.markdown("")
+
+                    # ── 5단계 유형 · 저장
+                    elif _kind == "save":
+                        st.markdown(f"**{_o}단계 · 저장**")
+                        st.caption(_stp.get("note", ""))
+                        st.caption("아래 다운로드 영역에서 TXT · DOCX · JSON을 저장할 수 있습니다.")
 
 # ═══════════════════════════════════════════════════════════
 # DOWNLOAD — TXT + DOCX (수시 저장)
@@ -2686,7 +2958,7 @@ if st.session_state.get("beats_done"):
         )
     all_text = "\n\n\n".join(parts)
 
-    col_dl1, col_dl2 = st.columns(2)
+    col_dl1, col_dl2, col_dl3 = st.columns(3)
     with col_dl1:
         st.download_button(
             label=f"TXT 저장 ({done_count}/15)",
@@ -2715,6 +2987,23 @@ if st.session_state.get("beats_done"):
             )
         except ImportError:
             st.caption("DOCX: python-docx 미설치 — pip install python-docx")
+    # ★ v3.10.0 — 최종 원고 옆에 작업 상태 JSON 저장
+    #   STEP 1의 「프로젝트 세션 백업」과 같은 포맷이므로 그대로 다시 불러올 수 있다.
+    with col_dl3:
+        st.download_button(
+            label=f"JSON 저장 ({done_count}/15)",
+            data=export_session_backup(),
+            file_name=make_backup_filename(
+                st.session_state.get("title", "") or "Untitled", done_count
+            ),
+            mime="application/json",
+            use_container_width=True,
+            key="final_json_download_btn",
+        )
+    st.caption(
+        "JSON은 원고 + STEP 1 입력 + 씬 플랜을 함께 담은 작업 상태 파일입니다. "
+        "STEP 1의 백업 불러오기로 복원됩니다."
+    )
 
 # ═══════════════════════════════════════════════════════════
 # RESET

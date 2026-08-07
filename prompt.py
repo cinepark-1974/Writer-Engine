@@ -1,7 +1,56 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v3.9.0
+# BLUE JEANS SCREENPLAY WRITER ENGINE v3.10.0
 # prompt.py — Full Version (Creator Engine v2.6.1 동기화)
 # © 2026 BLUE JEANS PICTURES
+#
+# v3.10.0 주요 변경사항 (2026-08-07):
+# - SCENE SEQUENCE 처방 레이어 신설 — 검증 다음에 무엇을 할지를 엔진이 지정한다
+#   * Mr. MOON 진단: "검증해서 오류가 났는데 그 다음에 뭘 해야 하는지에 대한
+#     지침이 없다. 검증 위반을 다시 쓰기 할 건지. 작업 순서를 번호로 가이드.
+#     검증 위반을 보완하는 버튼이 있거나."
+#   * v3.9.0은 진단까지만 했다. 위반 9건이 한 덩어리로 표시되는데 성질이
+#     셋으로 갈리고 처방도 셋으로 갈린다. 작가는 무엇부터 손댈지 알 수 없다.
+#
+# - 위반 3분류 체계 (scene_sequence.py v1.1.0)
+#   * 형식 위반 V5        → 파이썬이 직접 재번호. AI 호출 없음.
+#   * 국소 위반 V1~V4     → 해당 비트 재집필로 해결. 비트별 순차 처리.
+#   * 구조 위반 V6        → 씬 플랜 층위 문제. 여러 비트에 이전 할당량 분배.
+#
+# - 위반 → 비트 환산 (locate_scene_beats / map_violations_to_beats)
+#   * 검증 리포트는 위반을 씬 번호(S#44)로 표기하는데 작가가 손대는 단위는
+#     비트다. 비트별 원고를 각각 파싱해 씬↔비트 지도를 만들어 환산한다.
+#   * 'S#6~S#10' 구간 표기는 구간 전체로 확장해 매핑한다.
+#
+# - 작업 순서 자동 산출 (build_fix_plan)
+#   * 1단계 씬 번호 정리 → 2단계 국소 위반 보완(비트별) → 3단계 권역 재배치
+#     → 4단계 재검증 → 5단계 저장. 단계마다 대상 비트와 처리 방식이 붙는다.
+#   * 3단계 이전 할당량은 지배 권역 점유가 큰 비트부터 배분하되 한 비트당
+#     최대 3씬으로 제한한다. 한 번에 더 빼면 그 비트의 기능이 무너진다.
+#
+# - 보완 지시문 자동 생성 (build_violation_fix_instruction)
+#   * 위반 코드별 처방 원문을 조립해 build_targeted_rewrite_prompt()의
+#     user_instruction으로 주입한다. 작가가 지시문을 타이핑하지 않는다.
+#   * 공통 제약 — 씬 번호 체계 유지 / 분량 유지 / 앞뒤 비트 연속성 유지 /
+#     문제 없는 대사는 보존. 위반 회피용으로 씬을 뭉개는 것을 차단.
+#
+# - 일괄 처리를 의도적으로 배제 (Mr. MOON 결정: 순차)
+#   * 한 비트를 고치면 앞뒤 비트의 시간·공간이 함께 흔들린다. 일괄은 되돌리기가
+#     불가능해지고 새 위반을 검출 없이 누적시킨다.
+#
+# - V5 파이썬 자동 재번호 (renumber_scenes)
+#   * 헤딩 정규식에 맞는 행만 교체. 대사·지문 안의 'S#' 언급은 손대지 않는다.
+#   * 접미 문자 씬(S#12A)은 앞 씬 번호를 유지하고 문자만 남긴다.
+#
+# - 신규 래퍼 3종 (scene_sequence.py 부재 시 available=False 폴백)
+#   * build_fix_plan_for_writer()
+#   * build_violation_fix_instruction_for_writer()
+#   * renumber_scenes_for_writer()
+#
+# - main.py: 검증 패널 아래 「다음 작업 순서」 처방 영역 신설
+#   (단계별 번호 가이드 + 비트별 위반 보완 재집필 버튼 + 씬 번호 자동 재정렬),
+#   다운로드 영역에 JSON 저장 추가 (2열 → 3열).
+#
+# ─────────────────────────────────────────────────────────────
 #
 # v3.9.0 주요 변경사항 (2026-08-06):
 # - SCENE SEQUENCE LAYER 신설 — 비트와 씬 사이의 빈 층을 채운다
@@ -428,8 +477,8 @@
 # - Creator JSON 자동 로더
 # ─────────────────────────────────────────────────────────────
 
-ENGINE_VERSION = "v3.9.0"
-ENGINE_BUILD_DATE = "2026-08-06"
+ENGINE_VERSION = "v3.10.0"
+ENGINE_BUILD_DATE = "2026-08-07"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -6848,6 +6897,75 @@ def format_scene_sequence_report(report: dict) -> str:
         return SSQ.format_verify_report(report)
     except Exception:
         return "씬 시퀀스 리포트 생성에 실패했습니다."
+
+
+# ═══════════════════════════════════════════════════════════
+# ★ v3.10.0 신규 — SCENE SEQUENCE 처방 래퍼 3종
+# 검증(v3.9.0)은 진단만 했다. 이 래퍼들은 처방을 담당한다.
+# scene_sequence.py 부재 시 available=False로 조용히 폴백한다.
+# ═══════════════════════════════════════════════════════════
+
+def build_fix_plan_for_writer(report: dict, beats_done: dict,
+                              venue_hints: list = None) -> dict:
+    """검증 리포트를 번호가 매겨진 작업 순서로 변환한다.
+
+    1단계 씬 번호 정리 / 2단계 국소 위반 보완(비트별 순차) /
+    3단계 권역 재배치 / 4단계 재검증 / 5단계 저장
+
+    Returns:
+        dict: available, total_violations, steps[...]. 모듈 부재 시 available=False.
+    """
+    if not report or not report.get("available"):
+        return {"available": False, "total_violations": 0, "steps": []}
+    try:
+        import scene_sequence as SSQ
+    except Exception:
+        return {"available": False, "total_violations": 0, "steps": []}
+    try:
+        return SSQ.build_fix_plan(report, beats_done or {},
+                                  venue_hints=venue_hints or None)
+    except Exception:
+        return {"available": False, "total_violations": 0, "steps": []}
+
+
+def build_violation_fix_instruction_for_writer(report: dict, beat_no: int,
+                                               beats_done: dict,
+                                               plan: dict = None,
+                                               venue_hints: list = None) -> str:
+    """특정 비트의 위반 보완 지시문을 생성한다.
+
+    build_targeted_rewrite_prompt()의 user_instruction 인자로 그대로 넣는다.
+    해당 비트에 위반이 없거나 모듈이 없으면 빈 문자열.
+    """
+    if not report or not report.get("available"):
+        return ""
+    try:
+        import scene_sequence as SSQ
+    except Exception:
+        return ""
+    try:
+        return SSQ.build_violation_fix_instruction(
+            report, int(beat_no), beats_done or {},
+            plan=plan, venue_hints=venue_hints or None,
+        )
+    except Exception:
+        return ""
+
+
+def renumber_scenes_for_writer(beats_done: dict) -> tuple:
+    """씬 번호 중복·결번을 파이썬이 직접 해소한다 (V5 전용, AI 호출 없음).
+
+    Returns:
+        (새 beats_done dict, 변경 로그 list). 모듈 부재 시 (원본, []).
+    """
+    try:
+        import scene_sequence as SSQ
+    except Exception:
+        return (beats_done or {}), []
+    try:
+        return SSQ.renumber_scenes(beats_done or {})
+    except Exception:
+        return (beats_done or {}), []
 
 
 def build_scene_plan_prompt(

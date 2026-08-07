@@ -1,7 +1,19 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS Story Engine — Scene Sequence Pack v1.0.0
-# scene_sequence.py — 씬 시퀀스 레이어 (권역·시간대·장르 1막 셋업)
+# BLUE JEANS Story Engine — Scene Sequence Pack v1.1.0
+# scene_sequence.py — 씬 시퀀스 레이어 (권역·시간대·장르 1막 셋업 + 처방)
 # © 2026 BLUE JEANS PICTURES
+#
+# v1.1.0 (2026-08-07):
+# - Mr. MOON 진단: "검증해서 오류가 났는데 그 다음에 뭘 해야 하는지에 대한
+#   지침이 없다. 작업 순서를 번호로 가이드. 검증 위반을 보완하는 버튼이 있거나."
+# - 처방 레이어(10장) 신설. 위반을 성질에 따라 셋으로 나눈다.
+#   ① 형식 V5 → 파이썬 재번호 / ② 국소 V1~V4 → 비트 재집필 /
+#   ③ 구조 V6 → 여러 비트에 이전 할당량 분배
+# - locate_scene_beats / map_violations_to_beats — 씬 번호 위반을 비트로 환산
+# - build_fix_plan — 5단계 작업 순서 산출
+# - build_violation_fix_instruction — 비트별 보완 지시문 자동 생성
+# - renumber_scenes — 씬 번호 중복·결번 파이썬 자동 해소
+# - 일괄 처리는 의도적으로 제외 (한 비트 수정이 앞뒤 비트를 흔들기 때문)
 #
 # v1.0.0 (2026-08-06):
 # - Mr. MOON 진단: "Writer Engine에 씬 순서 설계가 없다. 비트 단위로는
@@ -30,8 +42,8 @@ import re
 from collections import Counter, OrderedDict
 
 MODULE_NAME = "BLUE JEANS Story Engine — Scene Sequence Pack"
-MODULE_VERSION = "v1.0.0"
-MODULE_BUILD_DATE = "2026-08-06"
+MODULE_VERSION = "v1.1.0"
+MODULE_BUILD_DATE = "2026-08-07"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -951,3 +963,433 @@ def build_scene_sequence_beat_block(genre: str, beat_number: int,
     if tk:
         parts.append(tk)
     return "\n\n".join(p for p in parts if p)
+
+
+# ═══════════════════════════════════════════════════════════
+# 10. 처방 레이어 — 위반 → 작업 순서 → 비트별 보완 지시문 (v1.1.0)
+#
+#   [설계 원칙]
+#   검증기(9장까지)는 진단만 한다. 이 장은 처방을 담당한다.
+#   위반은 성질이 셋으로 갈리고 처방도 셋으로 갈린다.
+#     ① 형식 위반 (V5)          → 파이썬이 직접 고친다. AI 호출 없음.
+#     ② 국소 위반 (V1·V2·V3·V4) → 해당 비트 재집필로 해결된다.
+#     ③ 구조 위반 (V6)          → 씬 플랜 층위 문제. 여러 비트에
+#                                 이전 할당량을 나눠 순차 재집필한다.
+#   같은 "위반 9건"으로 묶어 던지면 작가가 무엇부터 손댈지 알 수 없다.
+# ═══════════════════════════════════════════════════════════
+
+_SCENE_NO_RE = re.compile(r'S#\s*(\d+)')
+
+# 국소 위반 코드 (비트 재집필로 해결 가능)
+LOCAL_CODES = ("V1", "V2", "V3", "V4")
+# 형식 위반 코드 (파이썬 자동 처리)
+FORMAT_CODES = ("V5",)
+# 구조 위반 코드 (씬 플랜 층위)
+STRUCTURAL_CODES = ("V6",)
+
+
+def locate_scene_beats(beats_done: dict) -> dict:
+    """비트별 원고를 각각 파싱해 씬 번호 ↔ 비트 번호 지도를 만든다.
+
+    검증 리포트는 위반을 씬 번호(S#44)로만 표기한다.
+    작가가 손대야 하는 단위는 비트이므로 환산이 필요하다.
+
+    Returns:
+        dict(
+          scene_to_beat = {씬번호: 최초 등장 비트번호},
+          scene_to_beats = {씬번호: [등장한 모든 비트번호]},
+          beat_to_scenes = {비트번호: [그 비트의 씬번호 리스트]},
+        )
+    """
+    scene_to_beat, scene_to_beats, beat_to_scenes = {}, {}, {}
+    if not beats_done:
+        return dict(scene_to_beat={}, scene_to_beats={}, beat_to_scenes={})
+    for b_no in sorted(beats_done.keys()):
+        scenes = parse_scene_headings(beats_done.get(b_no) or "")
+        nos = []
+        for s in scenes:
+            n = s["no"]
+            nos.append(n)
+            scene_to_beats.setdefault(n, [])
+            if b_no not in scene_to_beats[n]:
+                scene_to_beats[n].append(b_no)
+            if n not in scene_to_beat:
+                scene_to_beat[n] = b_no
+        beat_to_scenes[b_no] = nos
+    return dict(scene_to_beat=scene_to_beat,
+                scene_to_beats=scene_to_beats,
+                beat_to_scenes=beat_to_scenes)
+
+
+def _scene_nos_in_message(msg: str) -> list:
+    """위반 메시지에서 씬 번호를 추출한다. 'S#6~S#10'이면 구간 전체로 확장."""
+    raw = [int(x) for x in _SCENE_NO_RE.findall(msg or "")]
+    if not raw:
+        return []
+    # 'S#a~S#b' 구간 표기 처리
+    if re.search(r'S#\s*\d+\s*[~∼-]\s*S#\s*\d+', msg or ""):
+        a, b = raw[0], raw[1] if len(raw) > 1 else raw[0]
+        if a <= b and (b - a) <= 60:
+            return list(range(a, b + 1))
+    return raw
+
+
+def map_violations_to_beats(report: dict, beats_done: dict) -> dict:
+    """위반 항목마다 대상 비트를 산출한다.
+
+    Returns:
+        dict(
+          items = [ {code, msg, scenes:[..], beats:[..]} ... ],
+          by_beat = {비트번호: [ {code, msg} ... ]},
+          unmapped = [ {code, msg} ... ]   # 씬 번호가 없어 비트 환산 불가
+        )
+    """
+    loc = locate_scene_beats(beats_done or {})
+    s2b = loc["scene_to_beats"]
+    items, by_beat, unmapped = [], {}, []
+
+    for code in ("V1", "V2", "V3", "V4", "V5", "V6"):
+        for msg in (report or {}).get("violations", {}).get(code, []):
+            nos = _scene_nos_in_message(msg)
+            beats = []
+            for n in nos:
+                for b in s2b.get(n, []):
+                    if b not in beats:
+                        beats.append(b)
+            beats.sort()
+            rec = dict(code=code, msg=msg, scenes=nos, beats=beats)
+            items.append(rec)
+            if beats:
+                for b in beats:
+                    by_beat.setdefault(b, []).append(dict(code=code, msg=msg))
+            else:
+                unmapped.append(dict(code=code, msg=msg))
+    return dict(items=items, by_beat=by_beat, unmapped=unmapped)
+
+
+def _dominant_venue_load(report: dict, beats_done: dict,
+                         venue_hints: list = None) -> list:
+    """지배 권역이 비트별로 몇 씬 들어 있는지 집계한다 (V6 이전 대상 산출용).
+
+    Returns: [(비트번호, 지배권역_씬수, 그_비트_총씬수), ...] 씬수 내림차순
+    """
+    venues = (report or {}).get("venues") or []
+    if not venues:
+        return []
+    top_venue = venues[0][0]
+    hints = (report or {}).get("hints") or venue_hints or None
+    out = []
+    for b_no in sorted((beats_done or {}).keys()):
+        scenes = parse_scene_headings(beats_done.get(b_no) or "")
+        if not scenes:
+            continue
+        c = 0
+        for s in scenes:
+            if normalize_venue(s["place"], hints) == top_venue:
+                c += 1
+        if c > 0:
+            out.append((b_no, c, len(scenes)))
+    out.sort(key=lambda x: (-x[1], x[0]))
+    return out
+
+
+def build_fix_plan(report: dict, beats_done: dict,
+                   venue_hints: list = None) -> dict:
+    """검증 리포트를 실행 가능한 작업 순서로 변환한다.
+
+    Returns:
+        dict(
+          available=True, total_violations=int,
+          steps=[ {order, kind, title, codes, action, ...} ... ]
+        )
+        kind: "format" | "local" | "structural" | "reverify" | "save"
+        action: "renumber" | "beat_rewrite" | None
+    """
+    rep = report or {}
+    mapped = map_violations_to_beats(rep, beats_done or {})
+    v = rep.get("violations", {}) or {}
+    total = sum(len(x) for x in v.values())
+
+    steps, order = [], 0
+
+    # ── 1단계 · 형식 위반 (V5) — 파이썬 자동 처리
+    fmt_items = [it for it in mapped["items"] if it["code"] in FORMAT_CODES]
+    if fmt_items:
+        order += 1
+        steps.append(dict(
+            order=order, kind="format", codes=list(FORMAT_CODES),
+            action="renumber",
+            title="씬 번호 정리",
+            count=len(fmt_items),
+            items=[dict(code=i["code"], msg=i["msg"]) for i in fmt_items],
+            note="AI 호출 없이 즉시 처리됩니다. 씬 순서는 그대로 두고 번호만 다시 매깁니다.",
+        ))
+
+    # ── 2단계 · 국소 위반 (V1~V4) — 비트별 순차 재집필
+    local_items = [it for it in mapped["items"] if it["code"] in LOCAL_CODES]
+    if local_items:
+        by_beat = {}
+        for it in local_items:
+            for b in (it["beats"] or []):
+                by_beat.setdefault(b, []).append(dict(code=it["code"], msg=it["msg"]))
+        unmapped_local = [dict(code=it["code"], msg=it["msg"])
+                          for it in local_items if not it["beats"]]
+        order += 1
+        steps.append(dict(
+            order=order, kind="local", codes=list(LOCAL_CODES),
+            action="beat_rewrite",
+            title="국소 위반 보완",
+            count=len(local_items),
+            beats=[dict(beat=b, items=by_beat[b]) for b in sorted(by_beat.keys())],
+            unmapped=unmapped_local,
+            note="위에서부터 한 비트씩 처리하세요. 한 비트를 고치면 앞뒤 비트의 "
+                 "시간·공간이 함께 흔들리므로 일괄 처리하지 않습니다.",
+        ))
+
+    # ── 3단계 · 구조 위반 (V6) — 권역 재배치
+    struct_items = [it for it in mapped["items"] if it["code"] in STRUCTURAL_CODES]
+    if struct_items:
+        venues = rep.get("venues") or []
+        pol = rep.get("policy") or {}
+        total_scenes = rep.get("total", 0) or 0
+        top_name = venues[0][0] if venues else ""
+        top_cnt = venues[0][1] if venues else 0
+        max_share = pol.get("max_share", 0.4)
+        move_need = 0
+        if total_scenes:
+            move_need = max(0, int(round(top_cnt - max_share * total_scenes)))
+        alt = [v0[0] for v0 in venues[1:6]]
+        load = _dominant_venue_load(rep, beats_done or {}, venue_hints)
+
+        # 이전 할당 — 지배 권역 점유가 큰 비트부터 나눠 배분
+        targets, remain = [], move_need
+        for b_no, cnt, tot in load:
+            if remain <= 0:
+                break
+            # 한 비트에서 한 번에 3씬 이상 빼면 그 비트의 기능이 무너진다
+            q = min(3, cnt - 1 if cnt > 1 else 1, remain)
+            if q <= 0:
+                continue
+            targets.append(dict(beat=b_no, quota=q,
+                                dominant_scenes=cnt, beat_scenes=tot))
+            remain -= q
+        order += 1
+        steps.append(dict(
+            order=order, kind="structural", codes=list(STRUCTURAL_CODES),
+            action="beat_rewrite",
+            title="권역 재배치",
+            count=len(struct_items),
+            items=[dict(code=i["code"], msg=i["msg"]) for i in struct_items],
+            dominant_venue=top_name,
+            move_need=move_need,
+            remain_after_plan=max(0, remain),
+            alt_venues=alt,
+            targets=targets,
+            note="비트 하나를 고쳐 해결되는 문제가 아닙니다. 위 비트에 나눠 배분된 "
+                 "이전 할당량대로 순차 재집필하고, 남으면 씬 플랜 층위에서 다시 봅니다.",
+        ))
+
+    # ── 4단계 · 재검증
+    if total > 0:
+        order += 1
+        steps.append(dict(
+            order=order, kind="reverify", codes=[], action=None,
+            title="재검증",
+            note="보완한 비트가 새 위반을 만들었을 수 있습니다. 반드시 다시 검증하세요.",
+        ))
+
+    # ── 5단계 · 저장
+    order += 1
+    steps.append(dict(
+        order=order, kind="save", codes=[], action=None,
+        title="저장",
+        note="DOCX는 원고, JSON은 작업 상태입니다. JSON은 STEP 1에서 다시 불러올 수 있습니다.",
+    ))
+
+    return dict(available=True, total_violations=total, steps=steps,
+                mapped=mapped)
+
+
+# ── 위반 코드별 보완 지시문 원문 ──────────────────────────
+
+def _fix_text_v1(msgs: list, policy: dict) -> str:
+    run = policy.get("max_run", 3)
+    body = "\n".join(f"  · {m}" for m in msgs)
+    return (
+        f"[권역 연속 체류 초과 — 반드시 해소]\n{body}\n"
+        f"→ 이 장르의 허용치는 같은 권역 연속 {run}씬이다.\n"
+        f"→ 초과 구간 중간의 씬을 다른 권역으로 옮겨라. 옮길 씬은 "
+        f"정보가 처음 공개되는 씬이 아니라 인물의 반응·준비·이동·통화가 "
+        f"일어나는 씬으로 골라라.\n"
+        f"→ 대사와 사건의 내용은 유지하고 벌어지는 장소만 바꾼다. "
+        f"장소가 바뀌면 그 공간에서만 가능한 행동 하나를 새로 넣어라. "
+        f"배경만 갈아 끼우면 옮긴 것이 아니다."
+    )
+
+
+def _fix_text_v2(msgs: list) -> str:
+    body = "\n".join(f"  · {m}" for m in msgs)
+    return (
+        f"[시간대 역행 — 반드시 해소]\n{body}\n"
+        f"→ 앞 씬보다 이른 시간대가 날짜 경과 표기 없이 나왔다.\n"
+        f"→ 두 방법 중 하나만 택하라. ① 헤딩 시간대에 '다음 날 아침'처럼 "
+        f"날짜 경과를 명시한다. ② 뒤 씬의 시간대를 앞 씬 이후로 바꾼다.\n"
+        f"→ 시간대를 바꿨으면 그 씬의 빛·소음·인물의 피로도 묘사도 함께 맞춰라."
+    )
+
+
+def _fix_text_v3(msgs: list) -> str:
+    body = "\n".join(f"  · {m}" for m in msgs)
+    return (
+        f"[시간대 단일화 — 반드시 해소]\n{body}\n"
+        f"→ 여러 씬이 같은 시간대에 묶여 하루가 흐르지 않는다. 관객은 "
+        f"사건이 진행되는데 시간이 멈춰 있다고 느낀다.\n"
+        f"→ 구간 안에서 최소 두 씬의 시간대를 옮겨 하루의 경과를 만들어라.\n"
+        f"→ 시간대를 옮긴 씬은 인물의 상태(옷·피로·허기·조명)로 경과를 보여라. "
+        f"헤딩만 고치고 본문이 그대로면 해결되지 않는다."
+    )
+
+
+def _fix_text_v4(msgs: list) -> str:
+    body = "\n".join(f"  · {m}" for m in msgs)
+    return (
+        f"[괄호 부기로 씬 분리 우회 — 반드시 해소]\n{body}\n"
+        f"→ 시간대 칸에 '(연속)' '(잠시 후)' 류를 붙여 씬을 쪼갠 흔적이다.\n"
+        f"→ 실제로 공간이나 시간이 바뀌었으면 정식 시간대를 적은 별개 씬으로 "
+        f"분리하고, 바뀌지 않았으면 앞 씬에 합쳐라."
+    )
+
+
+def _fix_text_v6(quota: int, alt_venues: list, dominant: str) -> str:
+    alt = " / ".join(alt_venues[:5]) if alt_venues else "기존에 등장한 다른 권역"
+    return (
+        f"[권역 재배치 — 이 비트 할당량 {quota}씬]\n"
+        f"→ 작품 전체가 '{dominant}'에 눌려 있다. 이 비트에서 {quota}씬을 "
+        f"다른 권역으로 이전하라.\n"
+        f"→ 이전 후보 권역: {alt}\n"
+        f"→ 이전 원칙: 그 씬의 기능(정보 공개·감정 전환·판돈 상승)은 그대로 "
+        f"유지하고 공간만 바꾼다. 공간이 바뀌면 목격자·소음·퇴로가 달라진다. "
+        f"그 차이를 최소 한 줄로 반영하라.\n"
+        f"→ 이전한 씬의 등·퇴장 동선이 앞뒤 씬과 맞아야 한다. 인물이 순간이동하면 안 된다."
+    )
+
+
+FIX_COMMON_CONSTRAINT = """
+[보완 재집필 공통 제약 — 위반 해소보다 우선한다]
+- 씬 번호 체계를 유지하라. 씬을 새로 만들거나 없애지 말고 기존 씬 안에서 해결하라.
+- 이 비트의 분량을 유지하라. 위반을 피하려고 씬을 짧게 뭉개면 실패다.
+- 직전·직후 비트와의 시간·공간·소품 상태 연속성을 깨지 말라.
+- 씬 헤딩 형식은 기존 원고와 동일하게 유지하라.
+- 위반 해소가 목적이지 대사 교체가 목적이 아니다. 문제 없는 대사는 살려라.
+""".strip()
+
+
+def build_violation_fix_instruction(report: dict, beat_no: int,
+                                   beats_done: dict,
+                                   plan: dict = None,
+                                   venue_hints: list = None) -> str:
+    """특정 비트의 위반을 보완하는 재집필 지시문을 생성한다.
+
+    build_targeted_rewrite_prompt()의 user_instruction 인자로 그대로 넣는다.
+    해당 비트에 위반이 없으면 빈 문자열을 반환한다.
+    """
+    rep = report or {}
+    pol = rep.get("policy") or {}
+    fp = plan or build_fix_plan(rep, beats_done or {}, venue_hints)
+
+    # 국소 위반 수집 — 위반이 여러 비트에 걸쳐 있으면 이 비트 몫만 명시한다
+    loc = locate_scene_beats(beats_done or {})
+    s2b = loc["scene_to_beats"]
+    mapped = map_violations_to_beats(rep, beats_done or {})
+    buckets = {c: [] for c in LOCAL_CODES}
+    for it in mapped.get("items", []):
+        if it["code"] not in buckets:
+            continue
+        if int(beat_no) not in (it["beats"] or []):
+            continue
+        line = it["msg"]
+        if len(it["beats"] or []) > 1:
+            own = [n for n in it["scenes"] if int(beat_no) in s2b.get(n, [])]
+            if own:
+                line += ("\n    → 이 위반은 여러 비트에 걸쳐 있다. "
+                         "이 비트가 담당하는 씬: "
+                         + ", ".join(f"S#{n}" for n in own)
+                         + " (다른 비트의 씬은 건드리지 말라)")
+        buckets[it["code"]].append(line)
+
+    blocks = []
+    if buckets["V1"]:
+        blocks.append(_fix_text_v1(buckets["V1"], pol))
+    if buckets["V2"]:
+        blocks.append(_fix_text_v2(buckets["V2"]))
+    if buckets["V3"]:
+        blocks.append(_fix_text_v3(buckets["V3"]))
+    if buckets["V4"]:
+        blocks.append(_fix_text_v4(buckets["V4"]))
+
+    # 구조 위반 할당량
+    for st_ in fp.get("steps", []):
+        if st_.get("kind") != "structural":
+            continue
+        for tg in st_.get("targets", []):
+            if int(tg.get("beat", -1)) != int(beat_no):
+                continue
+            blocks.append(_fix_text_v6(
+                int(tg.get("quota", 1)),
+                st_.get("alt_venues", []),
+                st_.get("dominant_venue", ""),
+            ))
+
+    if not blocks:
+        return ""
+
+    header = (
+        "★★★ 씬 시퀀스 위반 보완 재집필 ★★★\n"
+        "이 비트는 파이썬 검증기가 위반을 검출한 비트다. "
+        "아래 위반을 전부 해소한 상태로 다시 써라."
+    )
+    return "\n\n".join([header] + blocks + [FIX_COMMON_CONSTRAINT])
+
+
+# ── V5 전용 · 파이썬 자동 재번호 ──────────────────────────
+
+def renumber_scenes(beats_done: dict) -> tuple:
+    """비트 순서대로 씬 번호를 1부터 다시 매긴다 (중복·결번 해소).
+
+    - 헤딩 행(S#로 시작하고 헤딩 정규식에 맞는 행)만 건드린다.
+      대사·지문 안의 'S#' 언급은 손대지 않는다.
+    - 접미 문자가 붙은 씬(S#12A)은 앞 씬과 같은 번호를 유지한 채 문자만 남긴다.
+
+    Returns:
+        (새 beats_done dict, 변경 로그 list[str])
+    """
+    if not beats_done:
+        return {}, []
+    out, log, counter = {}, [], 0
+    for b_no in sorted(beats_done.keys()):
+        text = beats_done.get(b_no) or ""
+        new_lines = []
+        for raw_line in text.split("\n"):
+            line = raw_line.strip()
+            m = _HEADING_RE.match(line) if line.startswith("S#") else None
+            if not m:
+                new_lines.append(raw_line)
+                continue
+            old_no = int(m.group(1))
+            suffix = (m.group(2) or "").strip()
+            if suffix:
+                new_no = counter if counter > 0 else 1
+            else:
+                counter += 1
+                new_no = counter
+            if new_no != old_no:
+                # 헤딩 앞머리 'S#숫자'만 교체 (뒤 본문은 손대지 않는다)
+                new_line = re.sub(r'^(\s*S#\s*)\d+',
+                                  lambda mm: f"{mm.group(1)}{new_no}",
+                                  raw_line, count=1)
+                log.append(f"Beat {b_no} · S#{old_no}{suffix} → S#{new_no}{suffix}")
+                new_lines.append(new_line)
+            else:
+                new_lines.append(raw_line)
+        out[b_no] = "\n".join(new_lines)
+    return out, log
