@@ -1,7 +1,48 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v3.10.0
+# BLUE JEANS SCREENPLAY WRITER ENGINE v3.11.0
 # prompt.py — Full Version (Creator Engine v2.6.1 동기화)
 # © 2026 BLUE JEANS PICTURES
+#
+# v3.11.0 주요 변경사항 (2026-08-20):
+# - EVENT MANDATE 신설 (A32~A33) — "비트가 사건이 되었는가"를 검증하는 층위 추가
+#   * Mr. MOON 진단: "결과물이 전혀 극적인 사건이 발생하지 않고, 반복적인 장면·
+#     무의미한 행동의 반복(본다/접는다/입을 열지 않는다)만 있으며, 3막 클라이맥스가
+#     사건화되지 못한다." (정약용/사의재 원고 — 3막이 없을 정도로 붕괴)
+#   * 근본 원인: 기존 자가 점검 ①~⑤는 전부 "문장이 잘 쓰였는가"만 본다.
+#     찍히고(①), 인과로 잇고(②/A21), 한 샷이고(③/A22), 현재형이면(④/A23)
+#     통과다. 그래서 "잘 쓰인 정지 화면"(충돌·변화 없는 지문)이 검문을 통과한다.
+#
+# - [A32. 비트당 사건 강제 — Event Mandate]
+#   * 사건 = 욕망/목표 vs 장애물 충돌 → 되돌릴 수 없는 변화. 세 요소가 화면에 필수.
+#   * Creator의 status_change/consequence는 "충돌의 결과"다. 결과 이미지만 그리고
+#     충돌을 생략하면 사건이 죽는다 → 충돌을 먼저 그린 뒤 변화에 도달하도록 강제.
+#   * 근거: 기획PD 강의노트 2강(극적 질문 = 대가를 감수하는 욕망) 반영.
+#
+# - [A33. 클라이맥스 사건화 + 과감한 행동 — Climax Must Detonate]
+#   * 3막 클라이맥스에 A32 이중 적용. 정적 이미지 종결 금지 / 소극적 관찰 동사
+#     (본다·바라본다·멈춘다) 금지 / 판을 뒤집는 능동적 행동 강제.
+#   * 액션 장면 강요 아님 — 정적 사극도 "결정적 행동"은 존재(주모가 감시 의무를
+#     저버림, 저자가 스스로 이름을 지움 = 총격 없이 판을 뒤집는 사건).
+#
+# - 자가 점검 체크리스트에 ⑥ 추가 — "이 비트가 사건이 되었는가?"(욕망 vs 장애물
+#   충돌 → 변화). ①~⑤ 통과해도 ⑥ 없으면 정지 화면 → 재집필.
+#
+# - extract_from_creator_json — 비트별 사건 4필드 수신 추가
+#   * event_summary / decision_summary / consequence_summary / status_change
+#   * + narrative(폴백 소스). 정약용 JSON 실측: 15/15 비트 100% 충전 확인.
+#   * 구버전 Creator JSON은 빈 문자열 폴백 → narrative에서 사건 3요소 추출.
+#
+# - build_write_beat_prompt / build_targeted_rewrite_prompt — 사건 명세를
+#   비트 주입 블록 최상단(최우선)에 배치. "결과 이미지만 그리지 말고 충돌을
+#   먼저 그려라" 지시 동봉. 재집필 경로에도 동일 적용(3막 복구용).
+#
+# - 히어로즈 저니 12단계: BEATS_15에 이미 내장(Snyder 15비트=Vogler 12단계
+#   상업 재편)이라 별도 이식 없음. 외면/내면 승패 분리는 향후 별도 패치로 유보.
+#
+# - main.py 수정 불필요 — A32/A33은 SYSTEM_PROMPT 인라인, 4필드는 기존
+#   beat_v26_data 통로로 자동 전파. 함수 시그니처 불변(백워드 호환 유지).
+#
+# ─────────────────────────────────────────────────────────────
 #
 # v3.10.0 주요 변경사항 (2026-08-07):
 # - SCENE SEQUENCE 처방 레이어 신설 — 검증 다음에 무엇을 할지를 엔진이 지정한다
@@ -477,8 +518,8 @@
 # - Creator JSON 자동 로더
 # ─────────────────────────────────────────────────────────────
 
-ENGINE_VERSION = "v3.10.0"
-ENGINE_BUILD_DATE = "2026-08-07"
+ENGINE_VERSION = "v3.11.0"
+ENGINE_BUILD_DATE = "2026-08-20"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1298,6 +1339,13 @@ def extract_from_creator_json(creator_json: dict) -> dict:
             "physical_cost_stage": beat.get("physical_cost_stage", 0) or 0,
             "physical_cost_description": beat.get("physical_cost_description", "") or "",
             "antagonist_active_action": beat.get("antagonist_active_action", "") or "",
+            # ★ v3.11.0 — A32/A33 사건화 검증용 4필드 (충돌→변화 재료)
+            "event_summary": beat.get("event_summary", "") or "",
+            "decision_summary": beat.get("decision_summary", "") or "",
+            "consequence_summary": beat.get("consequence_summary", "") or "",
+            "status_change": beat.get("status_change", "") or "",
+            # 폴백 소스 — 위 4필드가 비어도 narrative에서 사건 3요소 추출 가능
+            "narrative": beat.get("narrative", "") or "",
         }
         # 비어있지 않은 필드가 1개라도 있을 때만 저장
         if any(v for v in beat_v26.values()):
@@ -1375,9 +1423,14 @@ def _collect_treatment_beats(treatment_raw: dict) -> list:
     """
     ★ v3.7.1 — 트리트먼트 JSON에서 비트 리스트 추출
     
-    Creator v2.6.0 트리트먼트는 다음 두 가지 구조 중 하나로 출력됨:
+    Creator 트리트먼트는 다음 세 가지 구조 중 하나로 출력됨:
       (A) {"acts": [{"act": 1, "beats": [...]}, {"act": 2, "beats": [...]}, ...]}
       (B) {"beats": [...]} — 단순 평탄 구조
+      (C) {"act1": {"beats": [...]}, "act2": {"beats": [...]}, "act3": {"beats": [...]}}
+          ★ v3.11.0 추가 — 실제 Creator v2.6.x 산출물의 주 구조.
+            정약용 JSON 실측으로 확인. 기존 (A)/(B)만으로는 이 구조에서
+            비트가 0개로 수집돼 사건 필드는 물론 A28/A29 필드까지 전부
+            누락되던 잠재 결함을 교정.
     
     구버전 Creator는 신규 필드가 없으므로 빈 dict이거나 다른 구조 가능.
     어떤 경우든 크래시 없이 빈 리스트 반환.
@@ -1390,6 +1443,24 @@ def _collect_treatment_beats(treatment_raw: dict) -> list:
     if isinstance(acts, list) and acts:
         beats = []
         for act in acts:
+            if isinstance(act, dict):
+                act_beats = act.get("beats", [])
+                if isinstance(act_beats, list):
+                    beats.extend(b for b in act_beats if isinstance(b, dict))
+        if beats:
+            return beats
+    
+    # (C) act1/act2/act3 키 구조 (★ v3.11.0 — 실제 주 구조)
+    #     act 뒤에 숫자가 붙은 모든 키를 순서대로 수집 (act4 이상도 대비)
+    act_keys = sorted(
+        [k for k in treatment_raw
+         if isinstance(k, str) and k.startswith("act") and k[3:].isdigit()],
+        key=lambda k: int(k[3:])
+    )
+    if act_keys:
+        beats = []
+        for ak in act_keys:
+            act = treatment_raw.get(ak, {})
             if isinstance(act, dict):
                 act_beats = act.get("beats", [])
                 if isinstance(act_beats, list):
@@ -3690,9 +3761,12 @@ A22 "한 문장 = 한 샷"은 의미 단위 문제다 — 한 문장 안에 들�
 ③ 한 문장 = 한 샷인가? (한 컷에 담기는 이미지 단위 / A22)
 ④ 현재형 능동인가? (~한다 / ~다 / A23)
 ⑤ 비트 = 문단인가? (한 사건 = 한 문단, 다음 사건 = 빈 줄 / 19번 룰)
+⑥ 이 비트가 사건이 되었는가? (욕망 vs 장애물 충돌 → 되돌릴 수 없는 변화 / A32)
+   — ①~⑤를 전부 통과해도 ⑥이 없으면 \\\"잘 쓰인 정지 화면\\\"이다.
+   — 비트 끝에서 관계·목표·처지 중 하나가 실제로 바뀌지 않았다면 다시 써라.
 
-5가지를 통과한 지문은 사후 분단이 필요 없다.
-처음부터 5가지 통과한 지문을 써라.
+6가지를 통과한 지문은 사후 분단이 필요 없다.
+처음부터 6가지 통과한 지문을 써라. 특히 ⑥ — 문장만 잘 쓰고 사건을 빠뜨리지 마라.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ADVANCED CRAFT — 7점 이상 진입을 위한 룰 (A25~A27)
@@ -3970,6 +4044,89 @@ Beat 12~  (4단계): 신체 일부 영구 손상 (청력·시력·손가락 등)
   단, 이때도 괄호가 아니라 지문 문장으로 푼다.
   예: 남자(40대, 남)가 들어선다. 오른손 등에 오래된 화상 흉터.  ← 흉터가 단서일 때만
   그냥 분위기용 외양 묘사라면 아예 적지 마라. 미술·의상에 맡겨라.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EVENT MANDATE — 비트가 사건이 되었는가 (A32~A33)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+A21~A24가 \\\"문장을 사건처럼 쓰는 법\\\"이었다면,
+A32~A33은 \\\"비트 자체가 사건이 되었는가\\\"를 검증한다.
+
+지금까지의 룰은 모두 \\\"문장이 잘 쓰였는가\\\"를 본다. 카메라가 찍을 수 있고(①),
+인과로 이어지고(②/A21), 한 샷씩이고(③/A22), 현재형이면(④/A23) 통과다.
+그러나 이 5가지를 전부 통과하고도 \\\"아무 사건도 일어나지 않은\\\" 지문이 존재한다.
+
+  ❌ 5체크 전부 통과하지만 사건이 없는 지문:
+  \\\"심환지의 손끝이 첫 줄을 따라 내려간다. 한 페이지. 두 페이지. 세 페이지.
+  촛불이 흔들린다. 심환지가 고개를 든다. 어둠을 본다.\\\"
+  → 찍을 수 있고, 인과로 이어지고, 한 샷씩이고, 현재형이다. 문단도 나뉜다.
+    그런데 누구의 욕망도 충돌하지 않았고, 상황은 그대로다. 잘 쓰인 정지 화면일 뿐이다.
+
+이런 지문이 통과하면 \\\"본다/넘긴다/멈춘다/입을 열지 않는다\\\"의 무의미한
+동작 반복이 비트를 채우고, 특히 3막 클라이맥스가 \\\"정보 확인 절차\\\"로 쪼그라든다.
+
+[A32. 비트당 사건 강제 — Event Mandate]
+사건이란 무엇인가 — **주인공(또는 시점 인물)의 욕망/목표가 장애물과 충돌해서,
+그 결과 상황이 되돌릴 수 없게 바뀌는 것.** 세 요소가 모두 화면에 있어야 사건이다:
+  (1) 누군가의 욕망/목표 (2) 그것을 막는 장애물 (3) 충돌 후 되돌릴 수 없는 변화.
+
+이 셋 중 하나라도 화면에 없으면 그 비트는 사건이 아니다.
+  - 욕망이 없으면 → 인물이 뭘 원하는지 모르는 채 행동만 나열된다.
+  - 장애물이 없으면 → 원하는 걸 그냥 얻는다. 극이 없다.
+  - 변화가 없으면 → 다 겪고도 상황이 제자리다. 비트가 헛돌았다.
+
+핵심 — Creator가 넘긴 status_change/consequence는 \\\"충돌의 결과\\\"다.
+Writer가 결과 이미지만 그리고 충돌 자체를 생략하면 사건이 죽는다.
+결과를 그리기 전에 **충돌을 먼저 화면에 그려라.**
+
+  ❌ 결과만 그림 (충돌 생략):
+  \\\"심환지가 페이지를 넘긴다. 자신의 이름이 적혀 있다. 촛불이 흔들린다.\\\"
+  → Creator의 \\\"비리가 정점에 도달\\\"이라는 결과 이미지만 있다.
+    정약용의 목표(기록을 권력에 도달시킨다)가 무엇과 충돌했는지 화면에 없다.
+
+  ✅ 충돌 → 변화 (사건):
+  \\\"심환지가 페이지를 넘기다 멈춘다. 자신의 이름. 그 아래 자신만이 아는 뇌물 액수.
+  손이 종이를 움켜쥔다. 태우려 촛불로 가져가다— 멈춘다. 이미 필사본이다.
+  태워도 소용없다. 심환지가 종이를 내려놓는다. 처음으로, 그가 밀리는 쪽이 된다.\\\"
+  → 감추려는 욕망 vs 이미 퍼진 기록(장애물)이 충돌하고, 권력 관계가 역전된다(변화).
+
+자가 점검 — 비트를 다 쓴 뒤 물어라:
+  □ 이 비트에서 누가 무엇을 원했는가? (욕망이 화면에 보이는가)
+  □ 그 욕망을 막은 것은 무엇인가? (장애물이 화면에 보이는가)
+  □ 비트 끝에서 무엇이 되돌릴 수 없게 바뀌었는가? (관계·목표·처지 중 하나)
+  세 개 중 하나라도 \\\"없다\\\"면 그 비트는 정지 화면이다. 다시 써라.
+
+폴백 — Creator 데이터에 event/decision/consequence/status_change가 없으면
+해당 비트의 narrative(트리트먼트 서술)에서 위 3요소를 직접 추출해 적용하라.
+
+[A33. 클라이맥스 사건화 + 과감한 행동 — Climax Must Detonate]
+3막 클라이맥스 비트(Finale-Climax)에는 A32가 두 배로 엄격하게 적용된다.
+클라이맥스는 작품 전체의 욕망이 가장 큰 장애물과 정면충돌하는 지점이다.
+
+1. **정적 이미지 종결 금지** — 클라이맥스 비트를 \\\"촛불이 탄다 / 서재가 고요하다 /
+   그가 어둠을 본다\\\" 같은 분위기 이미지로 닫지 마라. 그것은 사건의 뒤처리이지
+   사건이 아니다. 클라이맥스는 사건이 \\\"터지는\\\" 곳이지 \\\"가라앉는\\\" 곳이 아니다.
+
+2. **소극적 관찰 동사 금지** — 클라이맥스 인물의 핵심 동작이 \\\"본다/바라본다/
+   지켜본다/멈춘다/침묵한다\\\"에 머물면 안 된다. 인물은 **판을 뒤집는 능동적 행동**을
+   해야 한다. 관찰은 행동이 아니다. 결정하고, 움직이고, 상황을 바꿔라.
+
+   ❌ 소극적 관찰로 닫는 클라이맥스:
+   \\\"정약용이 완성된 원고를 본다. 창밖을 바라본다. 붓을 내려놓는다.\\\"
+   → 아무것도 뒤집히지 않았다. 인물이 구경꾼이다.
+
+   ✅ 판을 뒤집는 행동:
+   \\\"정약용이 원고 마지막 장에 이름 대신 빈칸을 남긴다. 익명이어야 퍼진다.
+   붓을 든 채, 스스로 저자의 자리를 지운다. 기록은 살고 그는 사라진다.\\\"
+   → 인물이 스스로 무언가를 포기·결행하며 상황을 되돌릴 수 없게 만든다.
+
+3. **눈에 그림이 그려지는가** — 클라이맥스의 결정적 행동은 관객의 눈앞에
+   구체적 이미지로 그려져야 한다. \\\"결심한다 / 각오한다 / 받아들인다\\\" 같은
+   내면 서술로 처리하지 마라. 그 내면이 어떤 **외적 행동**으로 나타나는지를 써라.
+
+주의 — 이것은 \\\"액션 장면(격투·추격)\\\"을 넣으라는 말이 아니다. 정적인 사극·드라마도
+클라이맥스에서 인물의 \\\"결정적 행동\\\"은 존재한다. 주모가 감시 의무를 저버리는 것,
+저자가 스스로 이름을 지우는 것 — 총격 없이도 이것들은 판을 뒤집는 사건이다.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SAFETY & CONTENT
@@ -7525,6 +7682,27 @@ def build_write_beat_prompt(
     if beat_v26_data and isinstance(beat_v26_data, dict):
         bv26 = beat_v26_data
         beat_v26_lines = []
+        # ── ★ v3.11.0 A32/A33 — 이 비트의 사건 명세 (충돌→변화). 최상단 = 최우선.
+        ev = bv26.get("event_summary", "")
+        dc = bv26.get("decision_summary", "")
+        cq = bv26.get("consequence_summary", "")
+        sc = bv26.get("status_change", "")
+        if ev or dc or cq or sc:
+            beat_v26_lines.append("  · ★ 이 비트의 사건(A32 — 반드시 화면 위 충돌로 장면화):")
+            if ev:
+                beat_v26_lines.append(f"      - 사건: {ev}")
+            if dc:
+                beat_v26_lines.append(f"      - 결정: {dc}")
+            if cq:
+                beat_v26_lines.append(f"      - 결과: {cq}")
+            if sc:
+                beat_v26_lines.append(f"      - 상태 변화: {sc}")
+            beat_v26_lines.append("    ★ 위 '결과/상태 변화'는 충돌의 산물이다. 결과 이미지만 그리지 말고,")
+            beat_v26_lines.append("      그 앞의 '욕망 vs 장애물 충돌'을 먼저 화면에 그린 뒤 변화에 도달할 것.")
+        elif bv26.get("narrative"):
+            # 폴백 — 사건 4필드가 없으면 narrative를 사건 추출 소스로 제공
+            beat_v26_lines.append("  · ★ 이 비트의 사건 서술(A32 — 아래에서 욕망·장애물·변화를 추출해 장면화):")
+            beat_v26_lines.append(f"      {bv26['narrative'][:600]}")
         if bv26.get("action_cycle"):
             beat_v26_lines.append(f"  · 행동 사이클(A28): {bv26['action_cycle']}")
         sp = bv26.get("setup_payoff_id", "")
@@ -8483,6 +8661,25 @@ def build_targeted_rewrite_prompt(
     if beat_v26_data and isinstance(beat_v26_data, dict):
         bv26 = beat_v26_data
         beat_v26_lines = []
+        # ── ★ v3.11.0 A32/A33 — 재집필 시에도 사건 명세 최우선 주입
+        ev = bv26.get("event_summary", "")
+        dc = bv26.get("decision_summary", "")
+        cq = bv26.get("consequence_summary", "")
+        sc = bv26.get("status_change", "")
+        if ev or dc or cq or sc:
+            beat_v26_lines.append("  · ★ 이 비트의 사건(A32 — 반드시 화면 위 충돌로 장면화):")
+            if ev:
+                beat_v26_lines.append(f"      - 사건: {ev}")
+            if dc:
+                beat_v26_lines.append(f"      - 결정: {dc}")
+            if cq:
+                beat_v26_lines.append(f"      - 결과: {cq}")
+            if sc:
+                beat_v26_lines.append(f"      - 상태 변화: {sc}")
+            beat_v26_lines.append("    ★ 결과 이미지만 그리지 말고, 그 앞의 '욕망 vs 장애물 충돌'을 먼저 화면에 그릴 것.")
+        elif bv26.get("narrative"):
+            beat_v26_lines.append("  · ★ 이 비트의 사건 서술(A32 — 욕망·장애물·변화 추출해 장면화):")
+            beat_v26_lines.append(f"      {bv26['narrative'][:600]}")
         if bv26.get("action_cycle"):
             beat_v26_lines.append(f"  · 행동 사이클(A28): {bv26['action_cycle']}")
         sp = bv26.get("setup_payoff_id", "")
