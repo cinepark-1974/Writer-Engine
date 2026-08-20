@@ -1,7 +1,49 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v3.11.0
+# BLUE JEANS SCREENPLAY WRITER ENGINE v3.12.0
 # prompt.py — Full Version (Creator Engine v2.6.1 동기화)
 # © 2026 BLUE JEANS PICTURES
+#
+# v3.12.0 주요 변경사항 (2026-08-20):
+# - 사극(배경)과 장르(재미)를 분리해 부스터를 다중 적용하도록 구조 변경.
+#   * Mr. MOON 진단: "역사극인데 정약용은 왜 재미없고 고증이 왜 틀렸나."
+#   * 근본 원인: 기존 get_genre_booster_module은 부스터를 하나만 반환했고,
+#     PERIOD가 장르 슬롯을 차지했다. 그래서 사극이면 장르 부스터를 못 받았다.
+#     - 장르 "시대극/사극" → PERIOD만 받고 장르(재미) 없음 → 재미없는 사극
+#     - 장르 "범죄/스릴러"(정약용 실제 입력) → THRILLER만 받고 사극 고증 없음
+#       → 조선 배경에 현대 스릴러 문법이 얹혀 어색 + 고증 반쪽
+#   * 실측: 정약용은 Creator가 "시대극/사극"으로 넘겼으나 Writer STEP1에
+#     "범죄/스릴러"로 입력돼 PERIOD 부스터를 아예 못 받았음.
+#
+# - get_genre_booster_module 재설계 — 사극이면 PERIOD + 장르 부스터를 함께 반환.
+#   * _select_core_genre_booster() 헬퍼 분리 (사극 제외한 장르 선택).
+#   * 사극 스릴러 = PERIOD + THRILLER, 사극 로맨스 = PERIOD + ROMANCE.
+#   * 두 부스터 사이에 역할 분리 안내(배경 vs 재미 엔진) 삽입.
+#   * 반환 타입 str 유지 → 호출부 완전 호환.
+#
+# - get_genre_booster_check_block 재설계 — 사극+장르 자가 검증 둘 다 출력.
+#   * _get_booster_spec() / _render_booster_check() 헬퍼 분리.
+#
+# - GENRE_BOOSTER_ROMANCE 신설 — 순수 로맨스/멜로를 DRAMA에서 분리.
+#   * Mr. MOON 진단: "로맨스에 질투하는 사람·사랑을 막는 사람이 없어서 밋밋."
+#   * 기존 결함: 순수 로맨스/멜로가 DRAMA 부스터(내면 변화)로 오배정됐음.
+#   * 코어 DNA: ★인격화된 방해자(연적·갈라놓는 자·훼방꾼) + 만남의 장벽 +
+#     정보 비대칭 + 감정의 신체화 + 장벽 에스컬레이션.
+#   * Howard/Mabley 〈Tools of Screenwriting〉 Obstacles 장에 정박
+#     (갈등은 대립하는 의지에서 나온다).
+#
+# - GENRE_BOOSTER_ROMCOM에도 인격화된 방해자 룰 추가 — 연적·훼방꾼이
+#   코믹 곤혹·오해의 원천이 되도록. (로코도 사람 방해자 필요)
+#
+# - _is_romcom에 "로코" 축약 표기 추가 — 기존엔 "롬코"만 잡혀 "로코"는
+#   부스터를 아예 못 받던 누락 교정.
+#
+# - Mr. MOON 지정 5장르(로맨스/로코·스릴러·호러·역사극·액션) 모두
+#   반드시 장르화 규칙 수신 보장. 실측: 5장르 전 표기 변형 부스터 배정 확인.
+#
+# - main.py 수정 불필요 — 모든 변경이 prompt.py 내부 함수/상수 레벨.
+#   함수 시그니처 불변(백워드 호환 유지).
+#
+# ─────────────────────────────────────────────────────────────
 #
 # v3.11.0 주요 변경사항 (2026-08-20):
 # - EVENT MANDATE 신설 (A32~A33) — "비트가 사건이 되었는가"를 검증하는 층위 추가
@@ -518,7 +560,7 @@
 # - Creator JSON 자동 로더
 # ─────────────────────────────────────────────────────────────
 
-ENGINE_VERSION = "v3.11.0"
+ENGINE_VERSION = "v3.12.0"
 ENGINE_BUILD_DATE = "2026-08-20"
 
 
@@ -2065,6 +2107,24 @@ Beat 6~10에서 두 인물이 같은 공간에 60% 이상 함께 등장
    긴장이 풀린다.
 4. **장벽의 에스컬레이션** — Beat 6, Beat 10, Beat 13에서 장벽이
    질적으로 강해진다 (관계 발전과 반비례).
+
+[★ HUMAN ANTAGONIST — 인격화된 방해자 강제 (v3.12.0 신규)]
+로코의 장벽은 '상황'만으로 부족하다. 로맨틱 코미디에서도 욕망을 가지고
+능동적으로 두 사람을 방해하는 "사람"이 있어야 웃음과 긴장이 함께 산다.
+(출처: Howard/Mabley, Obstacles — 갈등은 대립하는 의지에서 나온다)
+
+- 연적: 한쪽을 원하는 제3자. 배경이 아니라 데이트·자리에 적극적으로 끼어듦.
+- 갈라놓는 자: 관계를 막을 권력·이유를 가진 인물(부모·상사·약혼자·라이벌).
+- 훼방꾼: 오해를 조장하거나 정보를 왜곡해 둘 사이를 벌리는 인물.
+- ★ 방해자는 자기만의 욕망·논리가 있어야 한다(단순 악역 금지).
+  로코에서는 이 방해자 자체가 코믹 곤혹·오해·Status Flip의 원천이 된다.
+
+❌ 방해자 없이 "우연·타이밍·오해"만으로 갈등을 채우는 로코
+✅ 연적이 끼어들어 삼각 곤혹이 벌어지고, 그 자체가 코믹 폭발이 된다
+   (예: 라이벌이 데이트에 불쑥 합석 → 주인공의 코믹 곤혹 + Topper)
+
+원칙 — 로코 작품 전체에 인격화된 방해자가 최소 1명 세워져 있어야 한다.
+방해자가 없으면 만남의 장벽만으로는 밋밋하다. 방해자를 세워라.
 """.strip()
 
 
@@ -2218,6 +2278,78 @@ GENRE BOOSTER — DRAMA (드라마 비트 강제 규칙 v3.2)
 ❌ 모든 인물이 자기 감정을 명확히 말함
 ❌ 침묵 없이 대사로만 채워진 비트
 ❌ 시작과 끝의 관계 온도가 동일
+""".strip()
+
+
+GENRE_BOOSTER_ROMANCE = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GENRE BOOSTER — ROMANCE (로맨스/멜로 비트 강제 규칙 v3.12.0)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+★ 로맨스는 "내면 변화 드라마"가 아니다. 로맨스는 "두 사람이 이어지려는
+  욕망 vs 그것을 막는 장애물"의 충돌 장르다. 장애물이 약하면 재미가 없다.
+★ 매 비트에 다음 5종 중 최소 3개를 배치하라.
+
+[적용 범위]
+- 순수 로맨스·멜로 (로맨틱 코미디는 ROMCOM 부스터가 담당)
+- 〈봄날은 간다〉·〈건축학개론〉·〈접속〉·〈8월의 크리스마스〉 결의 멜로
+- 사극 로맨스면 PERIOD 부스터가 함께 붙는다 (시대 배경 + 로맨스 재미)
+
+[로맨스 코어 DNA 5종]
+
+1. ★ 인격화된 방해자 (Human Antagonist) — 가장 중요
+   로맨스의 장애물은 '상황'만으로 부족하다. 욕망을 가지고 능동적으로
+   두 사람을 방해하는 "사람"이 있어야 한다. (출처: Howard/Mabley,
+   Obstacles — 갈등은 대립하는 의지에서 나온다)
+   - 연적: 한쪽을 원하는 제3자. 배경이 아니라 적극적으로 끼어드는 행동.
+   - 갈라놓는 자: 관계를 막을 권력·이유를 가진 인물(부모·가문·상사·약혼자).
+   - 훼방꾼: 오해를 조장하거나 정보를 왜곡해 둘 사이를 벌리는 인물.
+   - ★ 방해자는 자기만의 욕망·논리가 있어야 한다(단순 악역 금지).
+     관객이 미워하되 이해는 되는. "저 사람 때문에 못 이어진다"가 있어야
+     관객이 주인공 편을 든다.
+   ❌ 방해자 없이 "출장/날씨/우연/타이밍"만으로 갈등을 채우는 비트
+   ✅ 연적이 데이트에 끼어들어 판을 흔든다 / 어머니가 상대를 불러 경고한다
+
+2. 만남의 장벽 (Obstacle to Meeting)
+   두 사람이 매일 만나면 거리가 없어지고, 거리가 없으면 설렘이 안 생긴다.
+   - 물리적 장벽: A가 B에게 못 가는 외부적 이유
+   - 심리적 장벽: A가 B를 보고 싶지만 자기가 자기를 막음
+   - 신분적 장벽: 한쪽이 정체를 숨겨야 함 → 만남이 위험
+   - 시간적 장벽: 어긋남, 엇갈림, 한 발 늦음
+   → 방해자(1번)가 이 장벽을 능동적으로 만들거나 강화하면 최상.
+
+3. 정보 비대칭 (Dramatic Irony in Love)
+   - 한쪽만 아는 마음, 한쪽만 아는 비밀, 관객만 아는 진실.
+   - "고백하려는데 상대가 오해하고 돌아선다" 같은 어긋남의 연료.
+   - 정보 격차가 최소 Beat 3개 이상 유지되어야 긴장이 안 풀린다.
+
+4. 감정의 신체화 (Emotion in the Body)
+   - "설렜다 / 마음이 흔들렸다" 같은 내면 서술 금지.
+   - 감정은 행동·신체로 드러난다: 눈을 못 맞춤, 문자를 썼다 지움,
+     우산을 씌워주려다 마는 손, 돌아선 뒤의 표정.
+   - 로맨스 씬은 양방향 — 상대역 POV도 최소 1개 (A18 참조).
+
+5. 관계 진전 vs 장벽 에스컬레이션 (Rising Stakes)
+   - 관계가 가까워질수록 장벽·방해도 질적으로 강해진다(반비례).
+   - Beat 6, Beat 10, Beat 13에서 방해자의 방해가 한 단계씩 세진다.
+   - 마지막 장벽은 가장 아프다: 이어지려면 무언가를 잃어야 하는 대가.
+
+[★ 자가 검증 — 비트 종료 시 점검 (5개 중 3개 이상 충족)]
+
+  □ 이 비트에 두 사람을 방해하는 "사람"이 능동적으로 작동하는가?
+  □ 만나지 못하거나 어긋나는 긴장이 있는가?
+  □ 정보 비대칭(한쪽만 아는 마음/비밀)이 유지되는가?
+  □ 감정이 내면 서술이 아니라 행동·신체로 드러나는가?
+  □ 관계 진전에 반비례해 장벽이 강해지는가?
+
+  → 3개 미달 시 비트 재작성. 특히 1번(인격화된 방해자)이 작품 전체에
+    한 번도 없으면, 그 로맨스는 밋밋하다 — 반드시 방해자를 세워라.
+
+[금지 패턴]
+❌ 두 사람이 아무 방해 없이 순조롭게 가까워지는 비트 연쇄
+❌ 방해가 전부 '상황·우연'이고 사람 훼방꾼이 없는 구조
+❌ '그녀의 마음이 흔들렸다' 같은 내면 서술로 감정 처리
+❌ 시작과 끝의 관계 온도·장벽 강도가 동일 (진전도 위기도 없음)
 """.strip()
 
 
@@ -2769,80 +2901,94 @@ HELPER CHARACTER RULE — 조력자 캐릭터 자립성 룰 v3.2
 # build_write_beat_prompt에서 장르 판별 후 적합한 부스터 주입.
 # ═══════════════════════════════════════════════════════════
 
-def get_genre_booster_module(genre: str) -> str:
+def _select_core_genre_booster(genre: str) -> str:
+    """시대 배경을 제외한 '장르(재미 엔진)' 부스터 하나를 선택.
+    
+    ★ v3.12.0 — PERIOD(사극)는 여기서 선택하지 않는다.
+    사극은 장르가 아니라 '배경 레이어'이므로 get_genre_booster_module에서
+    장르 부스터와 별개로 항상 함께 적용된다. (사극 스릴러 = PERIOD + THRILLER)
+    """
+    if _is_romcom(genre):
+        return GENRE_BOOSTER_ROMCOM
+    if _is_disaster(genre):
+        return GENRE_BOOSTER_DISASTER
+    if _is_mystery(genre):
+        return GENRE_BOOSTER_MYSTERY
+    if _is_horror(genre):
+        return GENRE_BOOSTER_HORROR
+    if _is_thriller(genre):
+        return GENRE_BOOSTER_THRILLER
+    if _is_sf(genre):
+        return GENRE_BOOSTER_SF
+    if _is_fantasy(genre):
+        return GENRE_BOOSTER_FANTASY
+    if _is_action(genre):
+        return GENRE_BOOSTER_ACTION
+    if _is_coming_of_age(genre):
+        return GENRE_BOOSTER_COMING_OF_AGE
+    if _is_comedy_only(genre):
+        return GENRE_BOOSTER_COMEDY
+    # ★ v3.12.0 — 순수 로맨스/멜로는 전용 ROMANCE 부스터 (DRAMA 아님)
+    if _is_romance(genre):
+        return GENRE_BOOSTER_ROMANCE
+    if _is_drama(genre):
+        return GENRE_BOOSTER_DRAMA
+    return ""
+
+
+def get_genre_booster_module(genre: str, historical: bool = False) -> str:
     """장르에 맞는 GENRE BOOSTER 모듈을 자동 선택해 반환.
     
-    선택 우선순위 (v3.2.1):
-      1. ROMCOM (코미디+로맨스 결합) — 가장 우선
-      2. PERIOD (사극·시대극) — 시대 결합 시 우선
-      3. DISASTER (재난) — 재난 결합 시 우선
-      4. MYSTERY (미스터리·추리)
-      5. HORROR (호러 단독)
-      6. THRILLER (스릴러/범죄/누아르)
-      7. SF (SF·과학)
-      8. FANTASY (판타지)
-      9. ACTION (액션)
-      10. COMING_OF_AGE (청춘·성장)
-      11. COMEDY (단독 코미디)
-      12. DRAMA (드라마/멜로)
+    ★ v3.12.0 구조 변경 — 사극(배경)과 장르(재미)를 분리해 다중 적용.
     
-    Returns:
-        str: 부스터 모듈 텍스트 (적용 대상 아니면 빈 문자열).
+    기존: PERIOD가 장르 슬롯을 차지해, 사극이면 장르 부스터를 못 받았다.
+          → '사극 스릴러'가 THRILLER 재미를 못 받고, '범죄 사극'이 사극
+            고증을 못 받는 반쪽 집필이 발생 (정약용 사례).
+    
+    변경: 사극이면 PERIOD 부스터 + 해당 장르 부스터를 '함께' 반환한다.
+          - 사극 스릴러 → PERIOD + THRILLER
+          - 사극 로맨스 → PERIOD + ROMANCE
+          - 순수 사극(장르 미표기) → PERIOD 단독
+    
+    ★ historical 플래그 연동 (정약용 함정 방지):
+      genre 문자열에 사극 표기가 없어도(예: "범죄/스릴러"), historical=True면
+      PERIOD 부스터를 적용한다. 정약용은 genre가 "범죄/스릴러"로 입력됐지만
+      historical=True였는데, 기존엔 genre만 봐서 PERIOD가 누락됐다.
+    
+    반환 타입은 기존과 동일하게 str (여러 부스터는 개행으로 연결).
+    호출부(단일 문자열 기대) 완전 호환. historical 기본값 False로 백워드 호환.
     """
     if not genre:
         return ""
     
-    # 1. ROMCOM이 가장 우선 (코미디+로맨스 결합)
-    if _is_romcom(genre):
-        return GENRE_BOOSTER_ROMCOM
+    blocks = []
     
-    # 2. 사극·시대극이 다른 장르와 결합 시 PERIOD 우선
-    # (시대 사극 액션 → PERIOD가 우선되어야 함)
-    if _is_period(genre):
-        return GENRE_BOOSTER_PERIOD
+    # 1. 시대 배경 레이어 — 사극 표기 또는 historical=True면 PERIOD를 얹는다
+    if _is_period(genre) or historical:
+        blocks.append(GENRE_BOOSTER_PERIOD)
     
-    # 3. 재난물 우선 (재난 액션, 재난 드라마 등)
-    if _is_disaster(genre):
-        return GENRE_BOOSTER_DISASTER
+    # 2. 장르(재미 엔진) 레이어 — 사극 여부와 독립적으로 선택
+    core = _select_core_genre_booster(genre)
+    if core:
+        blocks.append(core)
     
-    # 4. 미스터리·추리 (미스터리 스릴러는 미스터리가 우선)
-    if _is_mystery(genre):
-        return GENRE_BOOSTER_MYSTERY
+    if not blocks:
+        return ""
     
-    # 5. 호러는 스릴러보다 우선 (호러 안에 스릴러 요소 포함되는 경우 많음)
-    if _is_horror(genre):
-        return GENRE_BOOSTER_HORROR
+    # 사극 + 장르가 함께 걸린 경우, 역할 안내를 사이에 넣어 충돌 방지
+    if len(blocks) == 2:
+        bridge = (
+            "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "★ 배경(사극) + 장르 동시 적용 — 역할 분리 (v3.12.0)\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "위 PERIOD 부스터는 '시대 배경의 결'(권력 위계·의례·시대 어투·역사 사건)을 담당한다.\n"
+            "아래 장르 부스터는 '이 작품의 재미 엔진'(장르적 절대 목표)을 담당한다.\n"
+            "둘은 대체 관계가 아니라 겹쳐 작동한다 — 시대의 무대 위에서 장르의 재미가 터진다.\n"
+            "예) 사극 스릴러 = 조선의 권력 구조(PERIOD) 안에서 정보·추격·반전(THRILLER)이 작동.\n"
+        )
+        return blocks[0] + bridge + "\n\n" + blocks[1]
     
-    # 6. 스릴러/범죄
-    if _is_thriller(genre):
-        return GENRE_BOOSTER_THRILLER
-    
-    # 7. SF (SF가 액션 결합되어도 SF 우선)
-    if _is_sf(genre):
-        return GENRE_BOOSTER_SF
-    
-    # 8. 판타지 (판타지 액션 → 판타지 우선)
-    if _is_fantasy(genre):
-        return GENRE_BOOSTER_FANTASY
-    
-    # 9. 액션
-    if _is_action(genre):
-        return GENRE_BOOSTER_ACTION
-    
-    # 10. 청춘·성장
-    if _is_coming_of_age(genre):
-        return GENRE_BOOSTER_COMING_OF_AGE
-    
-    # 11. 단독 코미디 (다른 결합이 모두 걸러진 후)
-    if _is_comedy_only(genre):
-        return GENRE_BOOSTER_COMEDY
-    
-    # 12. 드라마/멜로 (가장 마지막)
-    if _is_drama(genre) or _is_romance(genre):
-        return GENRE_BOOSTER_DRAMA
-    
-    # 기타 — 부스터 없음
-    return ""
+    return blocks[0]
 
 
 def get_helper_character_rule() -> str:
@@ -2850,150 +2996,142 @@ def get_helper_character_rule() -> str:
     return HELPER_CHARACTER_RULE
 
 
-def get_genre_booster_check_block(genre: str) -> str:
-    """비트 종료 시 장르 부스터 자가 검증 게이트.
-    
-    AI가 비트 작성 후 INTERNAL 메모로 작성 (시나리오 본문에는 노출 안 됨).
-    main.py가 PROP CONTINUITY 메모와 함께 자동 제거.
+def _get_booster_spec(genre: str) -> dict:
+    """장르(재미 엔진) 하나의 자가 검증 스펙을 반환. 사극(PERIOD)은 제외.
+    ★ v3.12.0 — get_genre_booster_check_block이 사극+장르를 분리 검증하도록 헬퍼화.
     """
-    if not genre:
-        return ""
-    
-    # 장르별 룰 갯수와 필수 충족 갯수 (get_genre_booster_module과 동일 우선순위)
-    booster_specs = {}
-    
     if _is_romcom(genre):
-        booster_specs = {'name': 'ROMCOM', 'required': 2, 'rules': [
+        return {'name': 'ROMCOM', 'required': 2, 'rules': [
             "코믹 곤혹 상황 (Embarrassment)",
             "Misdirection (오해 폭소)",
             "Comic Specificity (구체적 디테일)",
             "Status Flip (지위 역전)",
             "Topper (한 번 더 웃기기)",
+            "\u2605 인격화된 방해자 작동 (연적\u00b7훼방꾼의 능동적 방해)",
         ]}
-    elif _is_period(genre):
-        booster_specs = {'name': 'PERIOD', 'required': 3, 'rules': [
-            "권력 위계의 가시화",
-            "의례·관습의 배치",
-            "시대 어투 + 한자어 인용",
-            "역사 사건과의 연결",
-            "의상·공간 디테일",
+    if _is_disaster(genre):
+        return {'name': 'DISASTER', 'required': 3, 'rules': [
+            "일상의 균열 (Cracks)", "첫 희생자 (First Casualty)",
+            "시한 가시화 (Visible Countdown)", "인간 본성 노출", "구조의 한계",
         ]}
-    elif _is_disaster(genre):
-        booster_specs = {'name': 'DISASTER', 'required': 3, 'rules': [
-            "일상의 균열 (Cracks)",
-            "첫 희생자 (First Casualty)",
-            "시한 가시화 (Visible Countdown)",
-            "인간 본성 노출",
-            "구조의 한계",
+    if _is_mystery(genre):
+        return {'name': 'MYSTERY', 'required': 3, 'rules': [
+            "단서 배치 (Clue Planting)", "가짜 단서 / 레드 헤링",
+            "추리 절차 가시화", "Reveal 단계화", "탐정의 결함",
         ]}
-    elif _is_mystery(genre):
-        booster_specs = {'name': 'MYSTERY', 'required': 3, 'rules': [
-            "단서 배치 (Clue Planting)",
-            "가짜 단서 / 레드 헤링",
-            "추리 절차 가시화",
-            "Reveal 단계화",
-            "탐정의 결함",
+    if _is_horror(genre):
+        return {'name': 'HORROR', 'required': 3, 'rules': [
+            "일상의 균열 (Everyday Cracks)", "Mystery Box 유지",
+            "신체적 불편함 디테일", "안전지대의 침범", "침묵의 사용",
         ]}
-    elif _is_horror(genre):
-        booster_specs = {'name': 'HORROR', 'required': 3, 'rules': [
-            "일상의 균열 (Everyday Cracks)",
-            "Mystery Box 유지",
-            "신체적 불편함 디테일",
-            "안전지대의 침범",
-            "침묵의 사용",
+    if _is_thriller(genre):
+        return {'name': 'THRILLER', 'required': 3, 'rules': [
+            "정보 비대칭 (Dramatic Irony)", "타이머 가시화",
+            "Setpiece 긴장 시퀀스", "Reveal 또는 Twist", "위협의 가시화",
         ]}
-    elif _is_thriller(genre):
-        booster_specs = {'name': 'THRILLER', 'required': 3, 'rules': [
-            "정보 비대칭 (Dramatic Irony)",
-            "타이머 가시화",
-            "Setpiece 긴장 시퀀스",
-            "Reveal 또는 Twist",
-            "위협의 가시화",
+    if _is_sf(genre):
+        return {'name': 'SF', 'required': 3, 'rules': [
+            "기술 룰북 일관성", "인간성에 대한 질문", "기술의 그림자 / 대가",
+            "미래 디테일 (Future Texture)", "윤리 딜레마",
         ]}
-    elif _is_sf(genre):
-        booster_specs = {'name': 'SF', 'required': 3, 'rules': [
-            "기술 룰북 일관성",
-            "인간성에 대한 질문",
-            "기술의 그림자 / 대가",
-            "미래 디테일 (Future Texture)",
-            "윤리 딜레마",
+    if _is_fantasy(genre):
+        return {'name': 'FANTASY', 'required': 3, 'rules': [
+            "룰북 일관성", "마법\u00b7초자연의 대가", "일상 \u2194 비일상 경계",
+            "상징의 시각화", "변신\u00b7각성",
         ]}
-    elif _is_fantasy(genre):
-        booster_specs = {'name': 'FANTASY', 'required': 3, 'rules': [
-            "룰북 일관성",
-            "마법·초자연의 대가",
-            "일상 ↔ 비일상 경계",
-            "상징의 시각화",
-            "변신·각성",
+    if _is_action(genre):
+        return {'name': 'ACTION', 'required': 3, 'rules': [
+            "Setpiece 액션 시퀀스", "물리적 위협의 가시화", "환경의 활용",
+            "능력의 표현 (Show Don't Tell)", "소진과 회복",
         ]}
-    elif _is_action(genre):
-        booster_specs = {'name': 'ACTION', 'required': 3, 'rules': [
-            "Setpiece 액션 시퀀스",
-            "물리적 위협의 가시화",
-            "환경의 활용",
-            "능력의 표현 (Show Don't Tell)",
-            "소진과 회복",
+    if _is_coming_of_age(genre):
+        return {'name': 'COMING_OF_AGE', 'required': 3, 'rules': [
+            "첫 경험의 무게", "어른 흉내 (Mimicking Adult)",
+            "자기 부정 / 자기 발견", "또래의 거울", "작은 결단 / 큰 의미",
         ]}
-    elif _is_coming_of_age(genre):
-        booster_specs = {'name': 'COMING_OF_AGE', 'required': 3, 'rules': [
-            "첫 경험의 무게",
-            "어른 흉내 (Mimicking Adult)",
-            "자기 부정 / 자기 발견",
-            "또래의 거울",
-            "작은 결단 / 큰 의미",
+    if _is_comedy_only(genre):
+        return {'name': 'COMEDY', 'required': 2, 'rules': [
+            "슬랩스틱 / 신체 코미디", "캐릭터 결함의 코믹 노출",
+            "Comic Specificity", "Status Flip", "Topper",
         ]}
-    elif _is_comedy_only(genre):
-        booster_specs = {'name': 'COMEDY', 'required': 2, 'rules': [
-            "슬랩스틱 / 신체 코미디",
-            "캐릭터 결함의 코믹 노출",
-            "Comic Specificity",
-            "Status Flip",
-            "Topper",
+    if _is_romance(genre):
+        return {'name': 'ROMANCE', 'required': 3, 'rules': [
+            "만남의 장벽 작동 (못 만남의 긴장)",
+            "\u2605 인격화된 방해자 (연적\u00b7갈라놓는 자\u00b7훼방꾼의 능동적 방해)",
+            "정보 비대칭 유지", "감정의 신체화 (내면 서술 금지)",
+            "관계 진전 vs 장벽 에스컬레이션",
         ]}
-    elif _is_drama(genre) or _is_romance(genre):
-        booster_specs = {'name': 'DRAMA', 'required': 3, 'rules': [
-            "침묵 비트 (Silence Beat)",
-            "일상 디테일 누적",
-            "결정의 순간 (Decision Moment)",
-            "관계의 변화",
-            "행동을 통한 감정 표현",
+    if _is_drama(genre):
+        return {'name': 'DRAMA', 'required': 3, 'rules': [
+            "침묵 비트 (Silence Beat)", "일상 디테일 누적",
+            "결정의 순간 (Decision Moment)", "관계의 변화", "행동을 통한 감정 표현",
         ]}
-    else:
+    return {}
+
+
+def _render_booster_check(spec: dict) -> str:
+    """단일 부스터 스펙을 자가 검증 메모 블록으로 렌더."""
+    rules_block = "\n".join(
+        f"  \u25a1 \ub8f0 {i+1}: [{r}] \u2014 \ucda9\uc871/\ubbf8\ucda9\uc871 + \ucda9\uc871 \uc2dc \uc5b4\ub290 \ubd80\ubd84\uc5d0\uc11c \uc791\ub3d9\ud558\ub294\uc9c0"
+        for i, r in enumerate(spec['rules'])
+    )
+    bar = "\u2501" * 27
+    return (
+        "\n" + bar + "\n"
+        f"[\u2605 \ube44\ud2b8 \uc885\ub8cc \uc2dc \uc790\uac00 \uac80\uc99d \u2014 GENRE_BOOSTER_CHECK ({spec['name']})]\n"
+        + bar + "\n\n"
+        "\ube44\ud2b8 \ubcf8\ubb38 \uc791\uc131 \uc644\ub8cc \ud6c4, \ucd9c\ub825 \ub9c8\uc9c0\ub9c9\uc5d0 \ub2e4\uc74c \ud615\uc2dd\uc73c\ub85c \uc790\uac00 \uac80\uc99d \uba54\ubaa8\ub97c \uc791\uc131\ud558\ub77c.\n"
+        "\uc774 \uba54\ubaa8\ub294 INTERNAL\uc774\uba70 \ucd5c\uc885 \uc2dc\ub098\ub9ac\uc624 \ubcf8\ubb38\uc5d0\ub294 \ub178\ucd9c\ub418\uc9c0 \uc54a\ub294\ub2e4.\n"
+        "(main.py\uac00 \uc790\ub3d9 \uc81c\uac70)\n\n"
+        f"<GENRE_BOOSTER_CHECK_{spec['name']}>\n"
+        f"{rules_block}\n\n"
+        f"  \ucda9\uc871 \uac1c\uc218: __\uac1c / {len(spec['rules'])}\uac1c\n"
+        f"  \ud544\uc218 \ucda9\uc871 \uac1c\uc218: {spec['required']}\uac1c ({spec['name']} \uae30\uc900)\n\n"
+        "  \u2192 \ud544\uc218 \ubbf8\ub2ec \uc2dc: \ube44\ud2b8 \uc7ac\uc791\uc131 \uad8c\uace0\n"
+        "  \u2192 \ucda9\uc871 \uc2dc: \ube44\ud2b8 \ud1b5\uacfc\n"
+        f"</GENRE_BOOSTER_CHECK_{spec['name']}>"
+    ).rstrip()
+
+
+def get_genre_booster_check_block(genre: str, historical: bool = False) -> str:
+    """비트 종료 시 장르 부스터 자가 검증 게이트.
+    
+    \u2605 v3.12.0 — 사극(PERIOD) + 장르를 분리해 둘 다 검증.
+    사극 스릴러면 PERIOD 체크와 THRILLER 체크가 함께 출력된다.
+    historical=True면 genre에 사극 표기 없어도 PERIOD 체크 포함.
+    
+    AI가 비트 작성 후 INTERNAL 메모로 작성. main.py가 자동 제거.
+    """
+    if not genre:
         return ""
     
-    rules_block = "\n".join(
-        f"  □ 룰 {i+1}: [{r}] — 충족/미충족 + 충족 시 어느 부분에서 작동하는지"
-        for i, r in enumerate(booster_specs['rules'])
-    )
+    blocks = []
+    if _is_period(genre) or historical:
+        period_spec = {'name': 'PERIOD', 'required': 3, 'rules': [
+            "권력 위계의 가시화", "의례\u00b7관습의 배치", "시대 어투 + 한자어 인용",
+            "역사 사건과의 연결", "의상\u00b7공간 디테일",
+        ]}
+        blocks.append(_render_booster_check(period_spec))
     
-    return f"""
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[★ 비트 종료 시 자가 검증 — GENRE_BOOSTER_CHECK ({booster_specs['name']})]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-비트 본문 작성 완료 후, 출력 마지막에 다음 형식으로 자가 검증 메모를 작성하라.
-이 메모는 INTERNAL이며 최종 시나리오 본문에는 노출되지 않는다.
-(main.py가 자동 제거)
-
-<GENRE_BOOSTER_CHECK>
-{rules_block}
-
-  충족 개수: __개 / 5개
-  필수 충족 개수: {booster_specs['required']}개 ({booster_specs['name']} 기준)
-  
-  → 필수 미달 시: 비트 재작성 권고
-  → 충족 시: 비트 통과
-</GENRE_BOOSTER_CHECK>
-
-[조력자 등장 비트일 경우 추가 검증]
-<HELPER_CHARACTER_CHECK>
-  □ 조력자 등장? (Y/N)
-  □ 등장 시: 직전 본선 사건 충분? (Y/N)
-  □ 조력자 자기 행동/선택? (Y/N)
-  □ 거울 효과? (Y/N)
-  □ 분량 적정? (Y/N)
-</HELPER_CHARACTER_CHECK>
-""".strip()
+    core_spec = _get_booster_spec(genre)
+    if core_spec:
+        blocks.append(_render_booster_check(core_spec))
+    
+    if not blocks:
+        return ""
+    
+    body = "\n\n".join(blocks)
+    helper_tail = (
+        "\n\n[\uc870\ub825\uc790 \ub4f1\uc7a5 \ube44\ud2b8\uc77c \uacbd\uc6b0 \ucd94\uac00 \uac80\uc99d]\n"
+        "<HELPER_CHARACTER_CHECK>\n"
+        "  \u25a1 \uc870\ub825\uc790 \ub4f1\uc7a5? (Y/N)\n"
+        "  \u25a1 \ub4f1\uc7a5 \uc2dc: \uc9c1\uc804 \ubcf8\uc120 \uc0ac\uac74 \ucda9\ubd84? (Y/N)\n"
+        "  \u25a1 \uc870\ub825\uc790 \uc790\uae30 \ud589\ub3d9/\uc120\ud0dd? (Y/N)\n"
+        "  \u25a1 \uac70\uc6b8 \ud6a8\uacfc? (Y/N)\n"
+        "  \u25a1 \ubd84\ub7c9 \uc801\uc815? (Y/N)\n"
+        "</HELPER_CHARACTER_CHECK>"
+    )
+    return (body + helper_tail).strip()
 
 
 # ═══════════════════════════════════════════════════════════
@@ -4987,7 +5125,7 @@ def _is_romcom(genre: str) -> bool:
     2) 코미디 + 로맨스 동시 포함
     """
     g = genre.lower()
-    if "로맨틱 코미디" in g or "로맨틱코미디" in g or "롬코" in g:
+    if "로맨틱 코미디" in g or "로맨틱코미디" in g or "롬코" in g or "로코" in g:
         return True
     if "romcom" in g or "rom-com" in g or "romantic comedy" in g:
         return True
@@ -5035,7 +5173,7 @@ def _is_period(genre: str) -> bool:
     """
     g = genre.lower()
     keywords = [
-        "사극", "시대극", "period",
+        "사극", "시대극", "역사", "period",  # "역사" 추가 (역사 호러/로맨스, 정통역사영화 등)
         "팩션", "faction",
         "조선", "고려", "삼국",
         "대하드라마",  # 대하사극 류
@@ -7850,7 +7988,7 @@ def build_write_beat_prompt(
     # 장르 자동 판별 후 해당 부스터 모듈 주입.
     # ROMCOM/HORROR/THRILLER/ACTION/DRAMA 5종 지원.
     # 부스터 미적용 장르(SF/판타지 단독)는 빈 문자열.
-    genre_booster_block = get_genre_booster_module(genre)
+    genre_booster_block = get_genre_booster_module(genre, historical=historical)
 
     # ★ v3.2.0 신규 블록 — HELPER CHARACTER RULE (모든 장르 공통)
     # 조력자 캐릭터 자립성 강제 룰 (다은 같은 캐릭터 공허 방지).
@@ -7859,7 +7997,7 @@ def build_write_beat_prompt(
     # ★ v3.2.0 신규 블록 — GENRE BOOSTER CHECK (자가 검증 게이트)
     # 비트 종료 시 INTERNAL 메모로 부스터 룰 충족 여부 자가 점검.
     # main.py의 _strip_prop_state_memos()가 PROP CONTINUITY 메모와 함께 자동 제거.
-    genre_booster_check_block = get_genre_booster_check_block(genre)
+    genre_booster_check_block = get_genre_booster_check_block(genre, historical=historical)
     
     # ★ v3.6.0 신규 — GENRE ESSENCE CHECK (장르 본질 자가 검증 게이트)
     # Creator Engine v2.5.5의 본질 3중 선언을 비트 종료 시 자가 검증.
