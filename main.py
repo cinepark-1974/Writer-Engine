@@ -2688,6 +2688,67 @@ def _run_violation_fix(b_no: int, instruction: str,
 
 
 # ═══════════════════════════════════════════════════════════
+# ★ v3.15.1 신규 — 검증 상태 판정 헬퍼
+# 문제: 검증이 끝났는지, 끝난 뒤 원고가 바뀌었는지 화면에서 알 수 없었다.
+#   기존 stale 플래그는 「위반 보완 재집필」에서만 켜져서, 일반 다시 쓰기·
+#   되돌리기·비트 추가 집필 후에는 낡은 검증 결과가 '최신'처럼 보였다.
+# 해결: 검증 시점의 원고 지문(해시)을 저장하고 현재 원고와 비교한다.
+#   어떤 경로로 원고가 바뀌든 자동으로 '재검증 필요'가 된다.
+# ═══════════════════════════════════════════════════════════
+import hashlib as _hashlib_ss
+from datetime import timezone as _tz_ss, timedelta as _td_ss
+
+
+def _ss_fingerprint() -> str:
+    return _hashlib_ss.md5(
+        _full_text_so_far().encode("utf-8", errors="ignore")
+    ).hexdigest()
+
+
+def _run_ss_verify() -> None:
+    """검증 실행 공용 함수 — 상단·하단 버튼, 씬 번호 재정렬이 함께 쓴다."""
+    _full = _full_text_so_far()
+    if not _full.strip():
+        st.session_state["ss_report"] = None
+        return
+    st.session_state["ss_report"] = verify_scene_sequence_for_writer(
+        _full,
+        genre=st.session_state.get("genre", ""),
+        confined_space=st.session_state.get("confined_space", False),
+        venue_hints=_get_venue_hints(),
+    )
+    st.session_state["ss_report_stale"] = False
+    st.session_state["ss_report_fp"] = _ss_fingerprint()
+    st.session_state["ss_report_beats"] = len(st.session_state.get("beats_done", {}) or {})
+    st.session_state["ss_report_time"] = datetime.now(
+        _tz_ss(_td_ss(hours=9))
+    ).strftime("%m/%d %H:%M")
+
+
+def _ss_status() -> dict:
+    """현재 검증 상태 — state: none / unavailable / stale / clean / violations"""
+    _rep = st.session_state.get("ss_report")
+    if not _rep:
+        return {"state": "none"}
+    if not _rep.get("available"):
+        return {"state": "unavailable"}
+    _vt = sum(len(x) for x in _rep.get("violations", {}).values())
+    _info = {
+        "violations": _vt,
+        "scenes": _rep.get("total", 0),
+        "time": st.session_state.get("ss_report_time", ""),
+        "beats": st.session_state.get("ss_report_beats", 0),
+    }
+    _fp = st.session_state.get("ss_report_fp")
+    _changed = (_fp is not None and _fp != _ss_fingerprint())
+    if _changed or st.session_state.get("ss_report_stale"):
+        _info["state"] = "stale"
+    else:
+        _info["state"] = "clean" if _vt == 0 else "violations"
+    return _info
+
+
+# ═══════════════════════════════════════════════════════════
 # ★ v3.9.0 신규 — SCENE SEQUENCE 검증 패널
 # 파이썬이 원고를 직접 파싱해 권역·시간대 위반을 검출한다.
 # AI에게 세라고 시키지 않는다 — 세는 주체와 어기는 주체가 같으면 안 되므로.
@@ -2710,19 +2771,18 @@ if st.session_state.get("beats_done"):
         )
 
     if _run_verify:
-        _full = _full_text_so_far()
-        if not _full.strip():
+        if not _full_text_so_far().strip():
             st.info("집필된 비트가 없습니다.")
-            st.session_state["ss_report"] = None
-        else:
-            st.session_state["ss_report"] = verify_scene_sequence_for_writer(
-                _full,
-                genre=st.session_state.get("genre", ""),
-                confined_space=st.session_state.get("confined_space", False),
-                venue_hints=_get_venue_hints(),
-            )
-            # 검증 시점 기준 — 이후 원고를 고치면 stale로 표시된다
-            st.session_state["ss_report_stale"] = False
+        with st.spinner("원고 전체를 검사하는 중입니다…"):
+            _run_ss_verify()
+
+    # ★ v3.15.1 — 검증 상태를 결과 맨 위에 한 줄로 고정 표시
+    _sst = _ss_status()
+    if _sst["state"] == "stale":
+        st.warning(
+            f"🔄 원고가 마지막 검증({_sst['time']}) 이후 수정되었습니다. "
+            "아래 결과는 이전 원고 기준입니다. [검증 실행]을 다시 누르세요."
+        )
 
     # ★ v3.10.0 — 검증 결과를 세션에 보관해 버튼 조작 후에도 유지한다
     _rep = st.session_state.get("ss_report")
@@ -2734,10 +2794,11 @@ if st.session_state.get("beats_done"):
             )
         else:
             _v_total = sum(len(x) for x in _rep.get("violations", {}).values())
+            _stamp = f" · 검증 시각 {_sst.get('time')}" if _sst.get("time") else ""
             if _v_total == 0:
-                st.success(f"✅ 위반 없음 — {_rep.get('total', 0)}씬 검사 완료")
+                st.success(f"✅ 위반 없음 — {_rep.get('total', 0)}씬 검사 완료{_stamp}")
             else:
-                st.error(f"⚠️ 위반 {_v_total}건 검출 — {_rep.get('total', 0)}씬 검사")
+                st.error(f"⚠️ 위반 {_v_total}건 검출 — {_rep.get('total', 0)}씬 검사{_stamp}")
             st.markdown(format_scene_sequence_report(_rep))
 
             # ═══════════════════════════════════════════════
@@ -2757,10 +2818,10 @@ if st.session_state.get("beats_done"):
                     '<span class="en">FIX PLAN · STEP BY STEP</span></div>',
                     unsafe_allow_html=True,
                 )
-                if st.session_state.get("ss_report_stale"):
+                if _sst["state"] == "stale":
                     st.warning(
                         "원고가 수정된 상태입니다. 아래 순서는 마지막 검증 시점 기준이므로 "
-                        "위 [검증 실행]을 다시 눌러 갱신하세요."
+                        "이 영역 맨 아래 [재검증 실행]을 눌러 갱신하세요."
                     )
 
                 # 2단계에 이미 잡힌 비트 — 3단계 중복 안내용
@@ -2801,15 +2862,7 @@ if st.session_state.get("beats_done"):
                                 st.session_state["ss_renumber_log"] = _log
                                 # 번호가 바뀌면 기존 리포트의 씬 참조가 전부 무효해진다.
                                 # 파이썬 검증은 비용이 없으므로 즉시 재검증해 갱신한다.
-                                st.session_state["ss_report"] = \
-                                    verify_scene_sequence_for_writer(
-                                        _full_text_so_far(),
-                                        genre=st.session_state.get("genre", ""),
-                                        confined_space=st.session_state.get(
-                                            "confined_space", False),
-                                        venue_hints=_get_venue_hints(),
-                                    )
-                                st.session_state["ss_report_stale"] = False
+                                _run_ss_verify()
                                 st.success(
                                     f"✅ 씬 번호 {len(_log)}건 재정렬 완료 — "
                                     f"검증 결과를 자동 갱신했습니다."
@@ -2919,7 +2972,7 @@ if st.session_state.get("beats_done"):
                     elif _kind == "reverify":
                         st.markdown(f"**{_o}단계 · 재검증**")
                         st.caption(_stp.get("note", ""))
-                        st.caption("위쪽 [검증 실행] 버튼을 다시 누르세요.")
+                        st.caption("이 영역 맨 아래 [재검증 실행] 버튼을 누르세요.")
                         st.markdown("")
 
                     # ── 5단계 유형 · 저장
@@ -2927,6 +2980,64 @@ if st.session_state.get("beats_done"):
                         st.markdown(f"**{_o}단계 · 저장**")
                         st.caption(_stp.get("note", ""))
                         st.caption("아래 다운로드 영역에서 TXT · DOCX · JSON을 저장할 수 있습니다.")
+
+    # ═══════════════════════════════════════════════
+    # ★ v3.15.1 신규 — 검증 마감 배너 「검증 상태」
+    # 처방 목록 끝에서 작가가 '지금 끝난 건지' 판단할 수 있게,
+    # 상태 하나와 다음 행동 하나를 맨 아래에 못박는다.
+    # 재검증 버튼도 여기 둔다 — 스크롤을 다시 올리지 않아도 된다.
+    # ═══════════════════════════════════════════════
+    st.markdown(
+        '<div class="section-header">🏁 검증 상태 '
+        '<span class="en">VERIFY STATUS · WHAT TO DO NOW</span></div>',
+        unsafe_allow_html=True,
+    )
+    _done_n = len(st.session_state.get("beats_done", {}) or {})
+    _st = _sst["state"]
+    if _st == "none":
+        st.info(
+            f"아직 검증하지 않았습니다 ({_done_n}/15 비트 집필). "
+            "아래 [검증 실행]을 누르면 결과와 다음 작업 순서가 이 위에 표시됩니다."
+        )
+    elif _st == "unavailable":
+        st.warning("scene_sequence.py가 없어 검증을 진행할 수 없습니다. 다운로드는 가능합니다.")
+    elif _st == "stale":
+        st.warning(
+            f"🔄 재검증 필요 — 마지막 검증({_sst['time']}) 이후 원고가 수정되었습니다. "
+            "아래 [재검증 실행]을 누르세요."
+        )
+    elif _st == "clean":
+        if _done_n >= 15:
+            st.success(
+                f"✅ 검증 완료 — 위반 없음 ({_sst['scenes']}씬 · 15/15 비트 · {_sst['time']}). "
+                "아래 다운로드 영역에서 최종 원고를 저장하세요."
+            )
+        else:
+            st.success(
+                f"✅ 검증 완료 — 위반 없음 ({_sst['scenes']}씬 · {_done_n}/15 비트 · {_sst['time']}). "
+                "남은 비트를 집필한 뒤 다시 검증하세요. 중간 저장은 아래 다운로드 영역에서 가능합니다."
+            )
+    else:  # violations
+        st.info(
+            f"검증 완료 — 위반 {_sst['violations']}건이 남아 있습니다 "
+            f"({_sst['scenes']}씬 · {_done_n}/15 비트 · {_sst['time']}). "
+            "위 「다음 작업 순서」대로 보완한 뒤 [재검증 실행]을 누르세요. "
+            "남은 위반을 작가 판단으로 유지할 경우, 지금 상태 그대로 아래에서 최종 저장해도 됩니다."
+        )
+
+    _btn_label = "검증 실행" if _st == "none" else "🔄 재검증 실행"
+    _rv_c1, _rv_c2 = st.columns([1, 3])
+    with _rv_c1:
+        _run_verify_bottom = st.button(
+            _btn_label, key="ss_reverify_bottom_btn", use_container_width=True,
+            type="primary" if _st in ("stale", "none") else "secondary",
+        )
+    with _rv_c2:
+        st.caption("파이썬 검사이므로 API 비용이 들지 않습니다. 몇 번을 눌러도 됩니다.")
+    if _run_verify_bottom:
+        with st.spinner("원고 전체를 검사하는 중입니다…"):
+            _run_ss_verify()
+        st.rerun()
 
 # ═══════════════════════════════════════════════════════════
 # DOWNLOAD — TXT + DOCX (수시 저장)
@@ -2938,9 +3049,19 @@ if st.session_state.get("beats_done"):
     )
 
     done_count = len(st.session_state["beats_done"])
+    # ★ v3.15.1 — 다운로드 직전에 검증 상태를 한 번 더 보여준다
+    _dl_sst = _ss_status()
+    _dl_verify = {
+        "none": "검증 전",
+        "unavailable": "검증 불가",
+        "stale": "재검증 필요 (원고 수정됨)",
+        "clean": f"검증 완료 · 위반 없음 ({_dl_sst.get('time', '')})",
+        "violations": f"검증 완료 · 위반 {_dl_sst.get('violations', 0)}건 남음 ({_dl_sst.get('time', '')})",
+    }.get(_dl_sst["state"], "")
     st.markdown(
         f'<div class="callout"><div class="cl">DATA</div>'
-        f'{done_count}/15 비트 완료. 새로고침하면 데이터가 사라집니다. 수시로 저장하세요.</div>',
+        f'{done_count}/15 비트 완료 · {_dl_verify}. '
+        f'새로고침하면 데이터가 사라집니다. 수시로 저장하세요.</div>',
         unsafe_allow_html=True,
     )
 
