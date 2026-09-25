@@ -225,6 +225,78 @@ def _split_action_paragraph(text: str) -> list:
 import re as _re_prop
 
 
+# ═══════════════════════════════════════════════════════════
+# ★ v3.15.4 신규 — AI 자가 보고서 제거
+# 문제: 기존 제거 규칙이 정확한 태그명(<GENRE_BOOSTER_CHECK>)만 잡았다.
+#   prompt.py는 <GENRE_BOOSTER_CHECK_HORROR>처럼 장르명을 붙여 지시하므로
+#   한 번도 제거되지 않았다. 위반 보완 재집필은 여기에 더해
+#   [씬 플랜 vs 집필 대조] · [보완 재집필 공통 제약 확인] · <!-- --> ·
+#   <SCENE_SEQUENCE_CHECK> 같은 변경 보고서를 원고 안에 남겼다.
+#   보고서 속 "S#69 EXT. … ✅" 줄은 검증기가 실제 씬으로 세어
+#   가짜 씬 번호 중복(V5)·가짜 시간 역행(V2)까지 만들었다.
+# 원칙: 시나리오 본문에 절대 나올 수 없는 형태만 지운다.
+#   (대문자 태그 블록, HTML 주석, 점검 헤더로 시작하는 보고 구간, ✅·□ 줄)
+# [소품 상태] 메모는 다음 비트 집필이 참조하므로 여기서는 남긴다.
+# ═══════════════════════════════════════════════════════════
+
+_RPT_TAG_BLOCK = _re_prop.compile(r'<([A-Z][A-Z0-9_]{2,})>[\s\S]*?</\1>')
+# <WRITER_NOTES_BEGIN> … <WRITER_NOTES_END> 같은 BEGIN/END 쌍 — 구간 전체 제거
+# (표지 줄만 지우면 DOCX 빌더의 WRITER_NOTES 스킵이 작동하지 않아 노트가 유출된다)
+_RPT_BEGIN_END = _re_prop.compile(r'<([A-Z][A-Z0-9_]*?)_BEGIN>[\s\S]*?(?:<\1_END>|\Z)')
+# 표지 없이 쓰인 작가 노트·변경 보고의 첫 줄
+_RPT_NOTE_START = _re_prop.compile(
+    r'^\s*(?:#{1,6}\s|INTERNAL\b'
+    r'|-\s*(?:비트 요약|비트 구조 유형|재집필 변경 사항|수정 지시 해소|위반 해소|'
+    r'시간대 위반 해소|액션 아이디어 전진|서사동력)[^:：\n]*[:：])'
+)
+_RPT_TAG_LINE = _re_prop.compile(r'^\s*</?[A-Z][A-Z0-9_]{2,}>\s*$', _re_prop.M)
+_RPT_HTML_COMMENT = _re_prop.compile(r'<!--[\s\S]*?(?:-->|\Z)')
+_RPT_HEADER = _re_prop.compile(
+    r'^\s*\[[^\]\n]*(?:CHECK|체크|점검|검증|확인|해소|대조|요약|연결|제약|'
+    r'시퀀스|에스컬레이션|자가|A\d{2})[^\]\n]*\]\s*$'
+)
+_RPT_SCENE_HEADING = _re_prop.compile(
+    r'^\s*S#\s*\d+\s*\.?\s*(?:INT|EXT|I/E|I\.?/E)', _re_prop.I
+)
+_RPT_JUNK_LINE = _re_prop.compile(r'^\s*[□☑■]|✅')
+
+
+def _strip_report_blocks(text: str) -> str:
+    """AI 자가 점검·변경 보고서를 원고에서 제거한다. 원고 문장은 건드리지 않는다."""
+    if not text:
+        return text
+    text = _RPT_HTML_COMMENT.sub('\n', text)
+    text = _RPT_BEGIN_END.sub('\n', text)
+    text = _RPT_TAG_BLOCK.sub('\n', text)
+    text = _RPT_TAG_LINE.sub('', text)
+
+    out, in_report = [], False
+    for line in text.split('\n'):
+        is_head = (bool(_RPT_HEADER.match(line)) or bool(_RPT_NOTE_START.match(line))) \
+            and '소품' not in line
+        if is_head:
+            try:
+                if _is_insert_label(line):   # [카톡 확인] 같은 INSERT 라벨은 보존
+                    is_head = False
+            except NameError:
+                pass
+        if is_head:
+            in_report = True
+            continue
+        if in_report:
+            # 보고 구간은 다음 '진짜' 씬 헤딩에서 끝난다
+            if _RPT_SCENE_HEADING.match(line) and '✅' not in line:
+                in_report = False
+            else:
+                continue
+        if _RPT_JUNK_LINE.search(line) or line.strip() == '---':
+            continue
+        out.append(line)
+    text = '\n'.join(out)
+    text = _re_prop.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
 def _strip_prop_state_memos(text: str) -> str:
     """
     텍스트에서 [소품 상태 / ...] 메모 블록을 제거.
@@ -245,6 +317,9 @@ def _strip_prop_state_memos(text: str) -> str:
     """
     if not text:
         return text
+
+    # ★ v3.15.4 — 자가 보고서 먼저 제거 (장르명 붙은 태그·HTML 주석·보고 구간)
+    text = _strip_report_blocks(text)
     
     # 패턴 1: 코드블록 안에 들어있는 케이스 (```로 감싼 형태)
     # ```\n[소품 상태 ...]\n- ...\n```
@@ -768,6 +843,33 @@ def stream_ai(prompt: str, tokens: int = 16000, model: str = ""):
                 yield text
     except Exception as e:
         yield f"\n\n❌ 오류: {e}"
+
+
+# ★ v3.15.3 신규 — AI 응답 실패 판정
+# stream_ai()는 오류가 나도 예외를 던지지 않고 "❌ 오류: …" 문장을 돌려준다.
+# 이 문장을 원고로 저장하면 비트 원고가 오류 한 줄로 덮어써진다
+# (실측: 크레딧 부족 400 오류로 「순환」 Beat 15 원고 소실).
+def _ai_failed(text) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return True
+    return t.startswith("❌") or "❌ 오류:" in t
+
+
+def _ai_fail_hint(text) -> str:
+    t = (text or "")
+    if "credit balance" in t:
+        return ("Anthropic API 크레딧이 부족합니다. console.anthropic.com의 "
+                "Plans & Billing에서 충전한 뒤 다시 시도하세요.")
+    if "ANTHROPIC_API_KEY" in t:
+        return "API 키가 설정되지 않았습니다. Streamlit Secrets를 확인하세요."
+    return "AI 응답이 실패했습니다. 잠시 뒤 다시 시도하세요."
+
+
+def _corrupted_beats() -> list:
+    """오류 문장으로 덮어써진 비트 번호 목록 (이전 버전에서 생긴 손상 탐지용)."""
+    _d = st.session_state.get("beats_done", {}) or {}
+    return sorted(int(k) for k, v in _d.items() if _ai_failed(v))
 
 def full_plan() -> str:
     """3막 플랜 합침."""
@@ -2471,6 +2573,10 @@ if plan_ready():
                     unsafe_allow_html=True,
                 )
                 result = st.write_stream(stream_ai(prompt, tokens=16000))
+                # ★ v3.15.3 — 실패 응답은 원고에 저장하지 않는다
+                if _ai_failed(result):
+                    st.error(f"❌ Beat {b_no} 재집필 실패 — 원고는 그대로입니다. {_ai_fail_hint(result)}")
+                    st.stop()
                 # INTERNAL 메모(소품 상태/GENRE_*_CHECK) 자동 제거
                 result = _strip_prop_state_memos(result)
                 st.session_state["beats_done"][b_no] = result
@@ -2550,6 +2656,12 @@ if plan_ready():
         )
         st.markdown(f'<div class="beat-tag">Beat {cur} 집필 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=16000))
+        # ★ v3.15.3 — 실패 응답은 저장하지 않고 다음 비트로 넘기지 않는다
+        if _ai_failed(result):
+            st.error(f"❌ Beat {cur} 집필 실패 — 저장하지 않았습니다. {_ai_fail_hint(result)}")
+            st.stop()
+        # ★ v3.15.4 — 자가 보고서는 저장 전에 제거 (소품 상태 메모는 다음 비트용으로 유지)
+        result = _strip_report_blocks(result)
         st.session_state["beats_done"][cur] = result
         st.session_state["current_beat"] = cur + 1
         st.rerun()
@@ -2609,6 +2721,10 @@ if plan_ready():
         )
         st.markdown(f'<div class="beat-tag">Beat {last_beat} 다시 쓰는 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=16000))
+        # ★ v3.15.3 — 실패 응답은 원고에 저장하지 않는다
+        if _ai_failed(result):
+            st.error(f"❌ Beat {last_beat} 다시 쓰기 실패 — 원고는 그대로입니다. {_ai_fail_hint(result)}")
+            st.stop()
         result = _strip_prop_state_memos(result)
         st.session_state["beats_done"][last_beat] = result
         st.success(f"✅ Beat {last_beat} 재집필 완료. 마음에 들지 않으면 비트 영역에서 ↩️ 되돌리기 가능.")
@@ -2627,9 +2743,6 @@ def _run_violation_fix(b_no: int, instruction: str,
     if b_no not in _done:
         st.warning(f"Beat {b_no}의 원고가 없습니다.")
         return
-
-    # 되돌리기용 자동 백업 (기존 ↩️ 버튼으로 복원 가능)
-    push_beat_history(b_no, _done[b_no])
 
     _prev = _done.get(b_no - 1, "") if ref_adjacent else ""
     _next = _done.get(b_no + 1, "") if ref_adjacent else ""
@@ -2676,6 +2789,14 @@ def _run_violation_fix(b_no: int, instruction: str,
         unsafe_allow_html=True,
     )
     _result = st.write_stream(stream_ai(_prompt, tokens=16000))
+    # ★ v3.15.3 — 실패 응답이면 원고를 건드리지 않고, 완료로 기록하지 않는다
+    if _ai_failed(_result):
+        st.session_state["ss_fix_flash_error"] = (
+            f"❌ Beat {b_no} 보완 실패 — 원고는 그대로입니다. {_ai_fail_hint(_result)}"
+        )
+        st.rerun()
+    # 되돌리기용 자동 백업 (기존 ↩️ 버튼으로 복원 가능) — 성공했을 때만
+    push_beat_history(b_no, _done[b_no])
     _result = _strip_prop_state_memos(_result)
     st.session_state["beats_done"][b_no] = _result
     st.session_state["ss_report_stale"] = True
@@ -2713,6 +2834,36 @@ def _ss_fingerprint() -> str:
 
 def _run_ss_verify() -> None:
     """검증 실행 공용 함수 — 상단·하단 버튼, 씬 번호 재정렬이 함께 쓴다."""
+    # ★ v3.15.3 — 오류 문장으로 덮어써진 비트가 있으면 검증하지 않는다.
+    #   씬이 사라진 원고를 검사하면 위반이 '가짜로' 줄어든다.
+    if _corrupted_beats():
+        st.session_state["ss_verify_blocked"] = True
+        return
+    st.session_state["ss_verify_blocked"] = False
+
+    # ★ v3.15.4 — 이미 원고에 섞인 자가 보고서를 검증 전에 제거한다.
+    #   보고서 속 "S#69 EXT. … ✅" 줄을 씬으로 세면 가짜 위반이 생긴다.
+    _cleaned = {}
+    for _k, _v in (st.session_state.get("beats_done", {}) or {}).items():
+        _c = _strip_report_blocks(_v)
+        if _c != _v:
+            push_beat_history(_k, _v)   # ↩️ 되돌리기 가능
+        _cleaned[_k] = _c
+    st.session_state["beats_done"] = _cleaned
+
+    # ★ v3.15.3 — 씬 번호 중복(V5)은 검증 전에 자동 정리한다 (AI 호출 없음).
+    #   재집필된 비트는 앞뒤와 번호가 겹쳐 나오므로, 정리하지 않으면
+    #   보완할 때마다 V5가 새로 생겨 '보완 → 재검증'이 끝나지 않는다.
+    _before = dict(st.session_state.get("beats_done", {}) or {})
+    _new_beats, _log = renumber_scenes_for_writer(_before)
+    if _log:
+        for _k, _v in _new_beats.items():
+            if _before.get(_k) != _v and _before.get(_k):
+                push_beat_history(_k, _before[_k])   # ↩️ 되돌리기 가능
+        st.session_state["beats_done"] = _new_beats
+        st.session_state["ss_renumber_log"] = _log
+    st.session_state["ss_auto_renumber_n"] = len(_log or [])
+
     _full = _full_text_so_far()
     if not _full.strip():
         st.session_state["ss_report"] = None
@@ -2732,6 +2883,24 @@ def _run_ss_verify() -> None:
     st.session_state["ss_report_time"] = datetime.now(
         _tz_ss(_td_ss(hours=9))
     ).strftime("%m/%d %H:%M")
+    # ★ v3.15.3 — 위반 추이 기록 (수렴 정체 판정용)
+    _rep_new = st.session_state.get("ss_report") or {}
+    if _rep_new.get("available"):
+        _vt_new = sum(len(x) for x in _rep_new.get("violations", {}).values())
+        _trend = list(st.session_state.get("ss_verify_trend") or [])
+        _trend.append(_vt_new)
+        st.session_state["ss_verify_trend"] = _trend[-8:]
+
+
+def _ss_stalled() -> bool:
+    """보완을 거듭해도 위반이 줄지 않는지 — 최근 3회 중 마지막이 2회 전보다 작지 않으면 정체."""
+    _t = st.session_state.get("ss_verify_trend") or []
+    return len(_t) >= 3 and _t[-1] > 0 and _t[-1] >= _t[-3]
+
+
+def _ss_trend_text() -> str:
+    _t = st.session_state.get("ss_verify_trend") or []
+    return " → ".join(str(x) for x in _t[-5:]) if len(_t) >= 2 else ""
 
 
 def _ss_status() -> dict:
@@ -2784,6 +2953,16 @@ if st.session_state.get("beats_done"):
             st.info("집필된 비트가 없습니다.")
         with st.spinner("원고 전체를 검사하는 중입니다…"):
             _run_ss_verify()
+
+    # ★ v3.15.3 — 오류 문장으로 덮어써진 비트 경고
+    _bad = _corrupted_beats()
+    if _bad:
+        st.error(
+            "❌ 다음 비트의 원고가 AI 오류 문장으로 덮어써져 있습니다: "
+            + ", ".join(f"Beat {b}" for b in _bad)
+            + ". STEP 2의 해당 비트 영역에서 ↩️ 되돌리기로 원고를 복원하세요. "
+            "복원 전에는 검증을 실행하지 않습니다(씬이 빠진 원고는 위반이 가짜로 줄어듭니다)."
+        )
 
     # ★ v3.15.1 — 검증 상태를 결과 맨 위에 한 줄로 고정 표시
     _sst = _ss_status()
@@ -2861,6 +3040,9 @@ if st.session_state.get("beats_done"):
                 _flash = st.session_state.pop("ss_fix_flash", None)
                 if _flash:
                     st.success(_flash)
+                _flash_err = st.session_state.pop("ss_fix_flash_error", None)
+                if _flash_err:
+                    st.error(_flash_err)
                 if _target_beats:
                     if not _left_targets:
                         st.success(
@@ -3083,13 +3265,30 @@ if st.session_state.get("beats_done"):
                 f"✅ 검증 완료 — 위반 없음 ({_sst['scenes']}씬 · {_done_n}/15 비트 · {_sst['time']}). "
                 "남은 비트를 집필한 뒤 다시 검증하세요. 중간 저장은 아래 다운로드 영역에서 가능합니다."
             )
+    elif _ss_stalled():
+        # ★ v3.15.3 — 보완을 반복해도 줄지 않으면 루프를 끝내라고 명시한다
+        st.warning(
+            f"🛑 보완 종료 권장 — 위반 추이 {_ss_trend_text()}. "
+            f"재집필을 반복해도 위반 {_sst['violations']}건이 더 줄지 않습니다. "
+            "남은 위반은 AI 재집필로 풀리지 않는 유형입니다. 원고에서 직접 고치거나, "
+            "작가 판단으로 유지하고 아래 다운로드 영역에서 최종 저장하세요."
+        )
     else:  # violations
+        _tr = _ss_trend_text()
         st.info(
             f"검증 완료 — 위반 {_sst['violations']}건이 남아 있습니다 "
-            f"({_sst['scenes']}씬 · {_done_n}/15 비트 · {_sst['time']}). "
+            f"({_sst['scenes']}씬 · {_done_n}/15 비트 · {_sst['time']}"
+            + (f" · 추이 {_tr}" if _tr else "") + "). "
             "위 「다음 작업 순서」대로 보완한 뒤 [재검증 실행]을 누르세요. "
             "남은 위반을 작가 판단으로 유지할 경우, 지금 상태 그대로 아래에서 최종 저장해도 됩니다."
         )
+    if st.session_state.get("ss_auto_renumber_n"):
+        st.caption(
+            f"검증 전에 겹친 씬 번호 {st.session_state['ss_auto_renumber_n']}건을 "
+            "자동 정리했습니다(AI 호출 없음, ↩️ 되돌리기 가능)."
+        )
+    if _bad:
+        st.caption("원고 손상 비트를 복원해야 검증이 실행됩니다.")
 
     _btn_label = "검증 실행" if _st == "none" else "🔄 재검증 실행"
     _rv_c1, _rv_c2 = st.columns([1, 3])
@@ -3136,8 +3335,9 @@ if st.session_state.get("beats_done"):
     for b_no in sorted(st.session_state["beats_done"].keys()):
         b_info = BEATS_15[b_no - 1]
         # ★ v3.5.1 — 지문↔대사 빈 줄 후처리 적용
+        # ★ v3.15.4 — TXT도 DOCX와 같이 내부 메모·보고서 제거 (기존엔 DOCX만 제거)
         beat_text = _normalize_screenplay_blank_lines(
-            st.session_state['beats_done'][b_no]
+            _strip_prop_state_memos(st.session_state['beats_done'][b_no])
         )
         parts.append(
             f"{'='*60}\n{b_info['act']} — Beat {b_no}. {b_info['name']}\n{'='*60}\n\n"
