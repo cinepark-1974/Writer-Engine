@@ -2679,10 +2679,16 @@ def _run_violation_fix(b_no: int, instruction: str,
     _result = _strip_prop_state_memos(_result)
     st.session_state["beats_done"][b_no] = _result
     st.session_state["ss_report_stale"] = True
-    st.success(
+    # ★ v3.15.2 — 보완 완료를 기록한다. 기록이 없으면 새로고침 후
+    #   같은 버튼이 그대로 다시 그려져 '초기화된 것처럼' 보인다.
+    from datetime import timezone as _tz_fx, timedelta as _td_fx
+    _fixed = dict(st.session_state.get("ss_fixed_beats") or {})
+    _fixed[int(b_no)] = datetime.now(_tz_fx(_td_fx(hours=9))).strftime("%H:%M")
+    st.session_state["ss_fixed_beats"] = _fixed
+    # 완료 메시지는 새로고침 다음 화면에서 한 번 보여준다(플래시 메시지).
+    st.session_state["ss_fix_flash"] = (
         f"✅ Beat {b_no} 보완 완료. 결과가 마음에 들지 않으면 "
-        f"STEP 2의 Beat {b_no} 영역에서 ↩️ 되돌리기로 복원하세요. "
-        f"다음 비트로 넘어가기 전에 재검증을 권합니다."
+        f"STEP 2의 Beat {b_no} 영역에서 ↩️ 되돌리기로 복원하세요."
     )
     st.rerun()
 
@@ -2718,6 +2724,9 @@ def _run_ss_verify() -> None:
         venue_hints=_get_venue_hints(),
     )
     st.session_state["ss_report_stale"] = False
+    # ★ v3.15.2 — 새 검증 결과가 나오면 보완 완료 기록은 그 결과로 대체된다
+    st.session_state["ss_fixed_beats"] = {}
+    st.session_state["ss_plan_beats"] = dict(st.session_state.get("beats_done", {}) or {})
     st.session_state["ss_report_fp"] = _ss_fingerprint()
     st.session_state["ss_report_beats"] = len(st.session_state.get("beats_done", {}) or {})
     st.session_state["ss_report_time"] = datetime.now(
@@ -2806,9 +2815,17 @@ if st.session_state.get("beats_done"):
             # 진단만 주고 끝내면 작가는 무엇부터 손댈지 알 수 없다.
             # 위반을 형식·국소·구조로 나눠 번호 순서와 버튼을 함께 제시한다.
             # ═══════════════════════════════════════════════
+            # ★ v3.15.2 — 처방 목록은 '검증 시점의 원고'로 고정한다.
+            #   현재 원고로 매번 다시 계산하면, 비트를 보완할 때마다 씬 구성이
+            #   바뀌어 그 비트가 목록에서 사라지거나 순서가 흔들린다.
+            #   (재집필 자체는 _run_violation_fix가 현재 원고로 수행한다.)
+            _plan_beats = st.session_state.get("ss_plan_beats")
+            if not _plan_beats:
+                _plan_beats = dict(st.session_state.get("beats_done", {}) or {})
+                st.session_state["ss_plan_beats"] = _plan_beats
             _plan = build_fix_plan_for_writer(
                 _rep,
-                st.session_state.get("beats_done", {}),
+                _plan_beats,
                 venue_hints=_get_venue_hints(),
             )
 
@@ -2830,6 +2847,34 @@ if st.session_state.get("beats_done"):
                     if _stp.get("kind") == "local":
                         for _bb in _stp.get("beats", []):
                             _local_beats.add(int(_bb["beat"]))
+
+                # ★ v3.15.2 — 보완 진행률. 재집필 대상 비트(국소 + 권역 이전) 전체 기준.
+                _fixed_map = st.session_state.get("ss_fixed_beats") or {}
+                _target_beats = set(_local_beats)
+                for _stp in _plan["steps"]:
+                    if _stp.get("kind") == "structural":
+                        for _tg in _stp.get("targets", []):
+                            _target_beats.add(int(_tg["beat"]))
+                _done_targets = sorted(b for b in _target_beats if b in _fixed_map)
+                _left_targets = sorted(b for b in _target_beats if b not in _fixed_map)
+
+                _flash = st.session_state.pop("ss_fix_flash", None)
+                if _flash:
+                    st.success(_flash)
+                if _target_beats:
+                    if not _left_targets:
+                        st.success(
+                            f"✅ 보완 대상 {len(_target_beats)}개 비트 모두 재집필 완료. "
+                            "이 영역 맨 아래 [재검증 실행]을 눌러 결과를 확인하세요."
+                        )
+                    else:
+                        st.progress(
+                            len(_done_targets) / len(_target_beats),
+                            text=(
+                                f"보완 진행 {len(_done_targets)}/{len(_target_beats)} 비트 · "
+                                f"남은 비트: {', '.join('Beat ' + str(b) for b in _left_targets)}"
+                            ),
+                        )
 
                 for _stp in _plan["steps"]:
                     _o = _stp.get("order")
@@ -2892,17 +2937,27 @@ if st.session_state.get("beats_done"):
                                     st.caption(f"　· [{_it['code']}] {_it['msg']}")
                                 _inst = build_violation_fix_instruction_for_writer(
                                     _rep, _b,
-                                    st.session_state.get("beats_done", {}),
+                                    _plan_beats,
                                     plan=_plan,
                                     venue_hints=_get_venue_hints(),
                                 )
                                 _fc1, _fc2 = st.columns([2, 3])
                                 with _fc1:
-                                    _fix_btn = st.button(
-                                        f"🔧 Beat {_b} 위반 보완 재집필",
-                                        key=f"fix_local_btn_b{_b}",
-                                        use_container_width=True,
-                                    )
+                                    if _b in _fixed_map:
+                                        # ★ v3.15.2 — 완료된 비트는 완료 표시 + 작은 재시도 버튼
+                                        st.success(f"✅ 보완 완료 · {_fixed_map[_b]}")
+                                        _fix_btn = st.button(
+                                            "다시 보완",
+                                            key=f"fix_local_btn_b{_b}",
+                                            use_container_width=True,
+                                        )
+                                    else:
+                                        _fix_btn = st.button(
+                                            f"🔧 Beat {_b} 위반 보완 재집필",
+                                            key=f"fix_local_btn_b{_b}",
+                                            use_container_width=True,
+                                            type="primary",
+                                        )
                                 with _fc2:
                                     with st.expander("자동 생성된 지시문 보기", expanded=False):
                                         st.text(_inst or "(생성된 지시문 없음)")
@@ -2944,17 +2999,26 @@ if st.session_state.get("beats_done"):
                                 continue
                             _inst_v = build_violation_fix_instruction_for_writer(
                                 _rep, _b,
-                                st.session_state.get("beats_done", {}),
+                                _plan_beats,
                                 plan=_plan,
                                 venue_hints=_get_venue_hints(),
                             )
                             _vc1, _vc2 = st.columns([2, 3])
                             with _vc1:
-                                _vfix_btn = st.button(
-                                    f"🔧 Beat {_b} 권역 이전 재집필",
-                                    key=f"fix_venue_btn_b{_b}",
-                                    use_container_width=True,
-                                )
+                                if _b in _fixed_map:
+                                    st.success(f"✅ 권역 이전 완료 · {_fixed_map[_b]}")
+                                    _vfix_btn = st.button(
+                                        "다시 이전",
+                                        key=f"fix_venue_btn_b{_b}",
+                                        use_container_width=True,
+                                    )
+                                else:
+                                    _vfix_btn = st.button(
+                                        f"🔧 Beat {_b} 권역 이전 재집필",
+                                        key=f"fix_venue_btn_b{_b}",
+                                        use_container_width=True,
+                                        type="primary",
+                                    )
                             with _vc2:
                                 with st.expander("자동 생성된 지시문 보기", expanded=False):
                                     st.text(_inst_v or "(생성된 지시문 없음)")
@@ -3002,9 +3066,11 @@ if st.session_state.get("beats_done"):
     elif _st == "unavailable":
         st.warning("scene_sequence.py가 없어 검증을 진행할 수 없습니다. 다운로드는 가능합니다.")
     elif _st == "stale":
+        _fx_n = len(st.session_state.get("ss_fixed_beats") or {})
+        _fx_txt = f" 보완 완료 {_fx_n}개 비트가 반영된 상태입니다." if _fx_n else ""
         st.warning(
-            f"🔄 재검증 필요 — 마지막 검증({_sst['time']}) 이후 원고가 수정되었습니다. "
-            "아래 [재검증 실행]을 누르세요."
+            f"🔄 재검증 필요 — 마지막 검증({_sst['time']}) 이후 원고가 수정되었습니다.{_fx_txt} "
+            "보완을 모두 마쳤으면 아래 [재검증 실행]을 누르세요."
         )
     elif _st == "clean":
         if _done_n >= 15:
