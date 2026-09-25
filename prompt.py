@@ -1,7 +1,25 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v3.15.4
+# BLUE JEANS SCREENPLAY WRITER ENGINE v3.15.5
 # prompt.py — Full Version (Creator Engine v2.6.1 동기화)
 # © 2026 BLUE JEANS PICTURES
+#
+# v3.15.5 주요 변경사항 (2026-09-25):
+# - 치명 버그 수정: 시대·직업 블록 오탐 (전 작품 영향).
+#   * 전체 파일 검토 중 발견. 시대 감지가 단순 포함 검사 + 1회 적중으로 주입.
+#     "하지"(미군정 사령관)가 부정문 "~하지 않는다"에 걸려 해방정국(1945~48) 블록이,
+#     "해방"·"이상"이 일상어로 걸려 일제강점기 블록이 현대극 모든 비트에 주입됨.
+#     「순환」 Beat 13 프롬프트에 해방정국·일제강점기 블록 6,904자가 들어가 있었다.
+#     직업도 "전화가"→화가, "주먹을 쥔다"→조폭, "검사 결과"→법률직 오탐.
+#   * 해결: _detect_periods_for_writer() / _detect_professions_for_writer() 신설.
+#     시대 — 사극·시대극이 아니면 그 시대 연도('○○○○년')가 명시될 때만 주입.
+#            사극·시대극은 일상어 키워드 제외 + 짧은 키워드 경계 판정 + 최소 2점.
+#     직업 — 인물 설정·로그라인만 스캔, 짧은 키워드 경계 판정, 관용구 제외.
+#     period_pack.py / profession_pack.py 데이터는 변경 없음 (Writer 판정만 엄격화).
+# - 따옴표 정리 (main.py): TXT·DOCX 저장 시 곧은 따옴표 → 둥근 따옴표.
+#   '엄마 — 부재중 1' → ‘엄마 — 부재중 1’, "이 열차는 막차입니다." → “이 열차는 막차입니다.”
+#   _to_curly_quotes() 신설. 저장 원본(JSON)은 그대로 두고 출력 단계에서만 변환.
+#
+# ─────────────────────────────────────────────────────────────
 #
 # v3.15.4 주요 변경사항 (2026-09-25):
 # - 버그 수정: AI 자가 점검 메모·변경 보고서가 원고에 남는 문제.
@@ -761,7 +779,7 @@
 # - Creator JSON 자동 로더
 # ─────────────────────────────────────────────────────────────
 
-ENGINE_VERSION = "v3.15.4"
+ENGINE_VERSION = "v3.15.5"
 ENGINE_BUILD_DATE = "2026-09-25"
 
 
@@ -1746,6 +1764,119 @@ def _dict_to_text(d: dict, indent: int = 0) -> str:
 # 비트 집필 단계에서 캐릭터 직업을 스캔해 휘발 방지를 위해 재주입.
 # ═══════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════
+# ★ v3.15.5 — 직업·시대 오탐 차단
+# 실측(「순환」, 현대 서울 지하철 호러):
+#   직업: "전화가"→화가(예술전통) 21회, "주먹을 쥔다"→조직폭력, "검사 결과"→법률직.
+#   시대: "~하지만"→하지(미군정 사령관)=해방정국 131회, "해방이다"·"이상하다"
+#         →일제강점기, "순서대로"→삼국시대, "공기인지"→고려.
+#   "지수는 아무 말도 하지 않는다." 한 줄만으로 해방정국 블록(3,448자)이 주입됐다.
+#   시대 블록은 장르와 무관하게 모든 비트에 들어가므로 v3.1.2 이후 현대극 전반이 영향권.
+# 원칙: 팩 데이터(period_pack/profession_pack)는 그대로 두고, Writer 쪽 판정만 엄격화.
+# ═══════════════════════════════════════════════════════════
+import re as _re_det
+
+_HANGUL_RE = _re_det.compile(r'[\uAC00-\uD7A3]')
+_KO_PARTICLES = set("가는이의와과을를들도만에서요님은로께")
+
+# 일상 문장과 겹쳐 직업 판정에 쓰지 않는 키워드
+_PROFESSION_SKIP = {"주먹"}
+# 뒤따르는 말이 이러면 직업이 아니다
+_PROFESSION_NEG_AFTER = {
+    "화가": r'\s*(나|났|치밀|풀|솟|머리)',
+    "검사": r'\s*(결과|받|를\s*받|했|중|실|지)',
+}
+
+# 일상어와 겹쳐 시대 판정에 쓰지 않는 키워드
+_PERIOD_SKIP = {"하지", "이상", "해방", "대로", "기인", "신탁", "휴전", "국군"}
+
+
+def _is_hangul(ch: str) -> bool:
+    return bool(ch) and bool(_HANGUL_RE.match(ch))
+
+
+def _count_bounded(text: str, kw: str, neg_after: str = "") -> int:
+    """두 글자 이하 한글 키워드를 '독립 단어'로 쓰인 경우만 센다.
+    앞 글자가 한글이면 제외(전화가→화가 X), 뒤 글자가 한글이면 조사일 때만 인정."""
+    n, i = 0, text.find(kw)
+    while i != -1:
+        prev_ch = text[i - 1] if i > 0 else ""
+        nxt = i + len(kw)
+        next_ch = text[nxt] if nxt < len(text) else ""
+        ok = not _is_hangul(prev_ch)
+        if ok and _is_hangul(next_ch) and next_ch not in _KO_PARTICLES:
+            ok = False
+        if ok and neg_after and _re_det.match(neg_after, text[nxt:nxt + 8]):
+            ok = False
+        if ok:
+            n += 1
+        i = text.find(kw, i + 1)
+    return n
+
+
+def _detect_professions_for_writer(scan_text: str) -> list:
+    """직업 카테고리 감지 (Writer 전용 엄격 판정). 적중 수 내림차순."""
+    try:
+        import profession_pack as _PR
+    except Exception:
+        return []
+    text = scan_text or ""
+    low = text.lower()
+    scores = {}
+    for cat, kws in _PR.PROFESSION_KEYWORDS.items():
+        sc = 0
+        for kw in kws:
+            if not kw or kw in _PROFESSION_SKIP:
+                continue
+            if kw.isascii():
+                sc += len(_re_det.findall(r'\b' + _re_det.escape(kw.lower()) + r'\b', low))
+            elif len(kw) <= 2:
+                sc += _count_bounded(text, kw, _PROFESSION_NEG_AFTER.get(kw, ""))
+            else:
+                neg = _PROFESSION_NEG_AFTER.get(kw, "")
+                sc += _count_bounded(text, kw, neg) if neg else text.count(kw)
+        if sc > 0:
+            scores[cat] = sc
+    return [c for c, _ in sorted(scores.items(), key=lambda x: -x[1])]
+
+
+def _detect_periods_for_writer(scan_text: str, genre: str = "", historical: bool = False) -> list:
+    """시대 감지 (Writer 전용 엄격 판정).
+    - 사극·시대극이 아닌 작품: 그 시대의 연도가 '○○○○년'으로 명시된 경우에만 인정.
+    - 사극·시대극: 일상어 키워드 제외 + 짧은 키워드 경계 판정 + 최소 2점.
+    """
+    try:
+        import period_pack as _PK
+    except Exception:
+        return []
+    text = scan_text or ""
+    period_work = bool(historical) or _is_period(genre or "")
+    scores = {}
+    for pk, kws in _PK.PERIOD_KEYWORDS_MAP.items():
+        year_hits, word_hits = 0, 0
+        for kw in kws:
+            if not kw:
+                continue
+            if kw.isdigit() and len(kw) == 4:
+                # "2000원" 같은 숫자 오탐 방지 — 반드시 '년'이 붙은 연도만
+                year_hits += len(_re_det.findall(r'(?<!\d)' + kw + r'(?=\s*년)', text))
+                continue
+            if kw in _PERIOD_SKIP:
+                continue
+            if len(kw) <= 2 and all(_is_hangul(c) for c in kw):
+                word_hits += _count_bounded(text, kw)
+            else:
+                word_hits += text.count(kw)
+        score = year_hits * 2 + word_hits
+        if period_work:
+            if score >= 2:
+                scores[pk] = score
+        else:
+            if year_hits >= 1:
+                scores[pk] = score
+    return [k for k, _ in sorted(scores.items(), key=lambda x: -x[1])]
+
+
 def build_profession_block_for_writer(scan_text: str, max_categories: int = 3) -> str:
     """
     캐릭터/씬 플랜/로그라인 등 텍스트를 스캔해 직업 카테고리 감지 후,
@@ -1776,7 +1907,8 @@ def build_profession_block_for_writer(scan_text: str, max_categories: int = 3) -
     
     try:
         # 카테고리 감지
-        cats = PP.detect_profession_category(scan_text)
+        # ★ v3.15.5 — 엄격 판정으로 교체 (팩의 단순 포함 검사는 일상어 오탐)
+        cats = _detect_professions_for_writer(scan_text)
         if not cats:
             return ""
         
@@ -1824,7 +1956,8 @@ def build_profession_block_for_writer(scan_text: str, max_categories: int = 3) -
 # 비트 집필 단계에서 시대 키워드를 스캔해 휘발 방지를 위해 재주입.
 # ═══════════════════════════════════════════════════════════
 
-def build_period_block_for_writer(scan_text: str, max_periods: int = 2) -> str:
+def build_period_block_for_writer(scan_text: str, max_periods: int = 2,
+                                  genre: str = "", historical: bool = False) -> str:
     """
     로그라인/세계관/트리트먼트 등 텍스트를 스캔해 시대 키워드 감지 후,
     해당 시대 디테일 블록을 비트 집필용으로 포맷팅하여 반환.
@@ -1854,9 +1987,13 @@ def build_period_block_for_writer(scan_text: str, max_periods: int = 2) -> str:
 
     try:
         # period_pack의 공식 빌더를 그대로 사용 (Creator와 동일 포맷 유지)
+        # ★ v3.15.5 — 엄격 판정으로 시대 키를 먼저 정하고, 빌더에는 수동 지정으로 넘긴다
+        _keys = _detect_periods_for_writer(scan_text, genre=genre, historical=historical)
+        if not _keys:
+            return ""
         block = PPK.build_period_block(
             locked_text=scan_text,
-            period_keys=None,
+            period_keys=_keys,
             max_periods=max_periods,
         )
         if not block or not block.strip():
@@ -8356,7 +8493,8 @@ def build_write_beat_prompt(
     
     # ★ v3.1.1 신규 블록 — Profession Pack 재주입 (휘발 방지)
     # 캐릭터 바이블 + 로그라인 + 씬 플랜 앞부분을 스캔해 직업 카테고리 감지 후 재주입
-    profession_scan = (characters or "") + "\n" + (logline or "") + "\n" + (scene_plan or "")[:3000]
+    # ★ v3.15.5 — 인물 설정·로그라인만 스캔 (씬 플랜 본문은 행동 묘사라 오탐 다발)
+    profession_scan = (characters or "") + "\n" + (logline or "")
     profession_block_text = build_profession_block_for_writer(profession_scan, max_categories=3)
 
     # ★ v3.1.2 신규 블록 — Period Pack 재주입 (시대 디테일 휘발 방지)
@@ -8369,7 +8507,9 @@ def build_write_beat_prompt(
         + "\n" + (treatment or "")[:4000]
         + "\n" + (story_elements or "")
     )
-    period_block_text = build_period_block_for_writer(period_scan, max_periods=2)
+    period_block_text = build_period_block_for_writer(
+        period_scan, max_periods=2, genre=genre, historical=historical,
+    )
 
     # ★ v3.1.4 신규 블록 — INSERT 시스템 (화면 텍스트 표기 강제)
     # 카톡·문자·이메일·유튜브·뉴스 등 화면 안 텍스트를 표준 표기로 강제.

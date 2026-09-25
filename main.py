@@ -297,6 +297,31 @@ def _strip_report_blocks(text: str) -> str:
     return text.strip()
 
 
+# ═══════════════════════════════════════════════════════════
+# ★ v3.15.5 신규 — 곧은 따옴표 → 둥근 따옴표 (TXT·DOCX 출력 단계)
+# 여는 자리: 줄 처음·공백·탭·여는 괄호·줄표 뒤 → ‘ “
+# 그 외(글자 뒤)는 닫는 자리 → ’ ”
+# ═══════════════════════════════════════════════════════════
+_QUOTE_OPEN_AFTER = set(" \t\n([{<〈《「『—–-·/…")
+
+
+def _to_curly_quotes(text: str) -> str:
+    if not text or ("'" not in text and '"' not in text):
+        return text
+    out = []
+    for i, ch in enumerate(text):
+        if ch in ("'", '"'):
+            prev = text[i - 1] if i > 0 else ""
+            opening = (prev == "") or (prev in _QUOTE_OPEN_AFTER)
+            if ch == "'":
+                out.append("\u2018" if opening else "\u2019")
+            else:
+                out.append("\u201c" if opening else "\u201d")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def _strip_prop_state_memos(text: str) -> str:
     """
     텍스트에서 [소품 상태 / ...] 메모 블록을 제거.
@@ -1581,6 +1606,7 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
         # AI가 비트 끝에 작성한 [소품 상태 / S#N 종료 시점] INTERNAL 메모는
         # 다음 비트 집필용 참조 자료로만 쓰이고, 최종 시나리오 본문에는 노출 안 됨.
         text = _strip_prop_state_memos(text)
+        text = _to_curly_quotes(text)   # ★ v3.15.5
 
         # ═══════════════════════════════════════════════════════════
         # 대사 형식 붕괴 자동 복구 (v3.4 신규)
@@ -3337,7 +3363,7 @@ if st.session_state.get("beats_done"):
         # ★ v3.5.1 — 지문↔대사 빈 줄 후처리 적용
         # ★ v3.15.4 — TXT도 DOCX와 같이 내부 메모·보고서 제거 (기존엔 DOCX만 제거)
         beat_text = _normalize_screenplay_blank_lines(
-            _strip_prop_state_memos(st.session_state['beats_done'][b_no])
+            _to_curly_quotes(_strip_prop_state_memos(st.session_state['beats_done'][b_no]))
         )
         parts.append(
             f"{'='*60}\n{b_info['act']} — Beat {b_no}. {b_info['name']}\n{'='*60}\n\n"
