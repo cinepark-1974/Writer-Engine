@@ -1,140 +1,54 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v3.15.5
-# prompt.py — Full Version (Creator Engine v2.6.1 동기화)
+# BLUE JEANS SCREENPLAY WRITER ENGINE v4.0.0
+# prompt.py — Full Version (Creator Engine v2.8.2 동기화)
 # © 2026 BLUE JEANS PICTURES
 #
-# v3.15.5 주요 변경사항 (2026-09-25):
-# - 치명 버그 수정: 시대·직업 블록 오탐 (전 작품 영향).
-#   * 전체 파일 검토 중 발견. 시대 감지가 단순 포함 검사 + 1회 적중으로 주입.
-#     "하지"(미군정 사령관)가 부정문 "~하지 않는다"에 걸려 해방정국(1945~48) 블록이,
-#     "해방"·"이상"이 일상어로 걸려 일제강점기 블록이 현대극 모든 비트에 주입됨.
-#     「순환」 Beat 13 프롬프트에 해방정국·일제강점기 블록 6,904자가 들어가 있었다.
-#     직업도 "전화가"→화가, "주먹을 쥔다"→조폭, "검사 결과"→법률직 오탐.
-#   * 해결: _detect_periods_for_writer() / _detect_professions_for_writer() 신설.
-#     시대 — 사극·시대극이 아니면 그 시대 연도('○○○○년')가 명시될 때만 주입.
-#            사극·시대극은 일상어 키워드 제외 + 짧은 키워드 경계 판정 + 최소 2점.
-#     직업 — 인물 설정·로그라인만 스캔, 짧은 키워드 경계 판정, 관용구 제외.
-#     period_pack.py / profession_pack.py 데이터는 변경 없음 (Writer 판정만 엄격화).
-# - 따옴표 정리 (main.py): TXT·DOCX 저장 시 곧은 따옴표 → 둥근 따옴표.
-#   '엄마 — 부재중 1' → ‘엄마 — 부재중 1’, "이 열차는 막차입니다." → “이 열차는 막차입니다.”
-#   _to_curly_quotes() 신설. 저장 원본(JSON)은 그대로 두고 출력 단계에서만 변환.
+# v4.0.0 주요 변경사항 (2026-10-01) — 메이저: 집필 단위 전환
+# - Mr. MOON 요청: "비트 단위 자유 집필에서 씬리스트 기준 집필로 전환한다.
+#   CREATOR가 확정한 것을 벗어나지 못하게 한다."
+# - 실제 샘플로 구조 확인 후 작업: 「부활」 씬리스트잠금(Creator v2.8.2),
+#   「부활」 최종완성(v2.8.2, 씬리스트 전), 「순환」 Treatment완료(v2.7.7).
 #
-# ─────────────────────────────────────────────────────────────
+# - W1 새 필드 로더 — scene_list_writer.py(신규 파일) load_scene_list_handoff().
+#   * writer_handoff_v28의 여섯 항목: scene_list_locked / sequences /
+#     speech_matrix / character_voice / character_core / state_axes.
+#   * 참조표 dialogue_modes / speech_registers, 보조 structure_story.storyline.
+#   * 필드가 없으면 기존 15비트 방식 그대로 + 화면에 "씬리스트 없음" 표시.
 #
-# v3.15.4 주요 변경사항 (2026-09-25):
-# - 버그 수정: AI 자가 점검 메모·변경 보고서가 원고에 남는 문제.
-#   * Mr. MOON 진단: "<GENRE_BOOSTER_CHECK_HORROR> 이런 게 왜 남지? 갑자기?"
-#   * 원인 ①(상시 누출): _render_booster_check()는 <GENRE_BOOSTER_CHECK_{장르}>로
-#     지시하는데 main.py 제거 규칙은 <GENRE_BOOSTER_CHECK>만 잡았다. 태그명 불일치.
-#   * 원인 ②(오늘 급증): 위반 보완 재집필이 "[씬 플랜 vs 집필 대조]",
-#     "[보완 재집필 공통 제약 확인]", "<!-- -->", "<SCENE_SEQUENCE_CHECK>" 같은
-#     변경 보고서를 원고 안에 출력. 출력 규칙에 "INTERNAL 메모도 평소대로 작성"만
-#     있고 보고 금지가 없었다.
-#   * 원인 ③(검증 오염): 보고서 속 "S#69 EXT. … ✅" 줄을 검증기가 씬 헤딩으로 인식
-#     → 가짜 씬 번호 중복(V5)·가짜 시간 역행(V2) 발생.
-#   * 해결(main.py): _strip_report_blocks() 신설 — 대문자 태그 블록 전체
-#     (장르명 접미 포함), HTML 주석, 점검 헤더로 시작하는 보고 구간(다음 진짜
-#     씬 헤딩까지), ✅·□ 줄 제거. INSERT 라벨·[소품 상태]는 보존.
-#     적용 지점: 새 비트 저장 시 / 검증 직전 전체 원고(↩️ 가능) / TXT·DOCX 저장 시.
-#     <WRITER_NOTES_BEGIN>…<WRITER_NOTES_END> 구간 전체 제거, 표지 없이 쓰인
-#     작가 노트("- 비트 요약:", "## 재집필 위반 해소 보고" 등)도 다음 씬 헤딩까지 제거.
-#     (배포 전 자체 발견: 초안이 BEGIN/END 표지 줄만 지워 노트가 DOCX로 새는 결함 수정)
-#     TXT 저장은 기존에 메모 제거가 아예 없었음 — 이번에 DOCX와 동일하게 적용.
-#   * 해결(prompt.py): build_targeted_rewrite_prompt() OUTPUT FORMAT에
-#     변경 보고 금지 조항 추가.
+# - W2 집필 단위를 시퀀스로 — build_write_sequence_prompt() 신설.
+#   * 호출 단위 = Creator 시퀀스(기본 8회). 구조 유형(상황 추진/관계 아크 등)과
+#     무관하게 같은 방식 → 골격별 분기 없음.
+#   * 각 호출: 해당 시퀀스 씬리스트 + 앞 시퀀스 마지막 씬 전문 + 다음 시퀀스 첫 씬 한 줄.
+#   * Creator 비트 수(16)와 Writer 15비트가 달라 비트 번호 기반 모듈은 막 위치로 환산
+#     (_proxy_beat_for_seq — BJND Cost 단계 힌트에만 사용). 오프닝은 첫 시퀀스,
+#     엔딩은 마지막 시퀀스에 주입.
+#   * 기존 안전망(장르 본질·부스터·BJND·직업/시대 팩·INSERT·소품·A30) 재사용.
+#     15비트 전용 지시(씬 플랜 찾기·장소 분산 5-3·조연 추가)는 씬리스트와 충돌해 제외.
 #
-# ─────────────────────────────────────────────────────────────
+# - W3 A36 씬리스트 고정 — 씬 추가·삭제·장소/시간/INT·EXT 변경·순서 변경·쪼개기 금지.
+#   * 출력 후 파이썬 대조(verify_against_scene_list)로 이탈 씬 번호 표시.
+#   * 씬리스트 모드에서는 scene_sequence.py 권역 검증(V1~V6)을 끈다 —
+#     장소·순서를 Creator가 확정했으므로 Writer가 다시 셀 이유가 없다.
 #
-# v3.15.3 주요 변경사항 (2026-09-25):
-# - 버그 수정: AI 오류 문장이 원고를 덮어쓰는 문제 (main.py).
-#   * Mr. MOON 진단: "재검증 실행을 무한반복시킨다."
-#   * 실측(「순환」): 크레딧 부족 400 오류로 Beat 15 보완이 실패했는데,
-#     stream_ai()가 예외 대신 "❌ 오류: …" 문장을 돌려줘 그 한 줄이 Beat 15
-#     원고로 저장되고 '보완 완료'로 기록됨. 재검증 시 씬 109 → 105,
-#     위반 9 → 8로 '가짜 개선'이 나타남.
-#   * 해결: _ai_failed()/_ai_fail_hint() 신설. 새 비트 집필·비트 재집필·
-#     마지막 비트 다시 쓰기·위반 보완 네 경로 모두 실패 응답을 저장하지 않음.
-#     크레딧 부족이면 충전 안내 문구 표시. 위반 보완은 성공 시에만 되돌리기 백업.
-#   * 이미 손상된 원고 탐지: _corrupted_beats(). 손상 비트가 있으면 경고하고
-#     검증을 실행하지 않음(↩️ 되돌리기로 복원 안내).
-# - 루프 차단 ①: 검증 직전 씬 번호 겹침(V5) 자동 정리(AI 호출 없음, ↩️ 가능).
-#   재집필된 비트가 앞뒤와 겹치는 번호를 달고 나와 매 회차 V5가 새로 생기던 구조 해소.
-# - 루프 차단 ②: 위반 추이 기록(ss_verify_trend). 최근 3회 중 마지막이 2회 전보다
-#   줄지 않으면 「🛑 보완 종료 권장」 배너로 전환 — 직접 수정 또는 최종 저장 안내.
-#   검증 상태 배너에 "추이 9 → 5 → 4" 표기.
+# - W4 A38 말투 관계표 준수 — 씬마다 그 씬 등장인물 쌍의 표만 주입.
+#   * 전환 비트(shift_beat) 이후 씬은 전환 후 말투를 주입.
+#   * 출력 후 파이썬이 종결어미로 1차 검출(check_speech_registers). 하대=반말 어미,
+#     혼용=판정 제외, 셋 이상 씬에서 상대 불분명=판정 불가, 하오체·사투리 등
+#     이분법 밖 어미=판정 불가. 최종 판단은 작가.
 #
-# ─────────────────────────────────────────────────────────────
+# - W5 A37 씬별 대사 방식 — Creator 대사 방식 이름을 그대로 사용.
+#   * 서브텍스트(=간극형, 기본값·회피 포함) / 대결(=압박형) / 정보 / 고백(=폭발형) /
+#     엇박 / 행동(=침묵형). 요청서 표기(간극형 등)도 별칭으로 수신.
+#   * 고백 씬에 한해 A34 검문1·2, Too Wet(대사), 속내 직접 발화 금지 해제.
+#     지문 감정 설명 금지(A1)는 유지.
+#   * 행동 씬에 한해 A35 핑퐁과 '대사 2~4개 교환' 분량 기준 해제.
 #
-# v3.15.2 주요 변경사항 (2026-09-25):
-# - 위반 보완 재집필 버튼의 완료 상태 표시 (main.py 전용, 룰·프롬프트 변경 없음).
-#   * Mr. MOON 진단: "비트별 재집필 버튼을 눌러 완료했으면 완료 버튼으로
-#     바뀌어야 하는데, 초기화되는 느낌이다."
-#   * 근본 원인: _run_violation_fix()가 완료 메시지 직후 st.rerun()으로 화면을
-#     새로 그려 메시지가 즉시 사라졌고, 어느 비트를 보완했는지 기록이 없어
-#     새 화면이 같은 버튼을 그대로 다시 그렸다.
-#   * 해결 ①: 세션에 보완 완료 기록(ss_fixed_beats: 비트 → 완료 시각) 신설.
-#     완료 비트는 버튼 대신 "✅ 보완 완료 · 시각" + 작은 [다시 보완] 버튼.
-#     권역 이전(V6) 버튼도 동일("✅ 권역 이전 완료" + [다시 이전]).
-#   * 해결 ②: 완료 메시지를 플래시 방식으로 보관해 새로고침 후 한 번 표시.
-#   * 해결 ③: 처방 영역 상단에 보완 진행률 바(완료/대상 비트, 남은 비트 목록).
-#     전부 끝나면 "모두 재집필 완료 — 재검증하세요"로 전환.
-#   * 해결 ④: 처방 목록을 '검증 시점의 원고'로 고정(ss_plan_beats).
-#     실측(「순환」 15/15): 기존엔 현재 원고로 목록을 매번 재계산해, 보완한
-#     비트의 씬 구성이 바뀌면 그 비트가 목록에서 통째로 사라지고 진행률
-#     분모가 줄었다(0/13 → 0/12). 재집필 자체는 현재 원고로 수행.
-#   * 재검증 실행 시 완료 기록·고정 목록 초기화 — 새 검증 결과가 새 기준이 된다.
-#   * 미완료 버튼은 강조색(primary), 완료 후 재시도 버튼은 기본색으로 구분.
+# - W6 씬 단위 재작성 — build_rewrite_scene_prompt() 신설.
+#   * 씬 하나만 재집필(직전·직후 씬 전문 참조), 재집필 후 W3·W4 재검증,
+#     씬 단위 되돌리기, 작가가 직접 고친 씬은 잠금 → 시퀀스 재집필 시에도 보존.
 #
-# ─────────────────────────────────────────────────────────────
-#
-# v3.15.1 주요 변경사항 (2026-09-25):
-# - 씬 시퀀스 검증 UI 보강 (main.py 전용, 룰·프롬프트 변경 없음).
-#   * Mr. MOON 진단: "15비트가 끝나고 검증 실행을 했는데, 검증이 종료된 것인지
-#     아닌지 UI로 알 수 없다."
-#   * 근본 원인 ①: 처방 목록 끝의 재검증·저장 단계가 작은 캡션 한 줄이라
-#     '끝났다/남았다'의 판정이 화면에 없었다. 재검증 버튼은 맨 위에만 있었다.
-#   * 근본 원인 ②: '원고 수정됨(stale)' 표시가 「위반 보완 재집필」에서만 켜졌다.
-#     일반 다시 쓰기·되돌리기·추가 집필 후에는 낡은 결과가 최신처럼 보였다.
-#   * 해결 ①: 검증 영역 맨 아래 「🏁 검증 상태」 마감 배너 신설.
-#     상태 5종(검증 전/검증 불가/재검증 필요/위반 없음/위반 N건 남음)과
-#     각 상태의 다음 행동(최종 다운로드 안내 또는 재검증)을 명시.
-#     배너 아래 [재검증 실행] 버튼 배치(스크롤 복귀 불필요).
-#   * 해결 ②: 검증 시점의 원고 지문(해시)을 저장해 현재 원고와 비교.
-#     어떤 경로로 원고가 바뀌어도 자동으로 '재검증 필요'로 전환.
-#   * 부가: 결과 헤드라인과 다운로드 안내 박스에 검증 시각·상태 표기.
-#   * main.py 신규 헬퍼: _ss_fingerprint(), _run_ss_verify(), _ss_status().
-#     prompt.py 함수·시그니처 변경 없음 → import 블록 변경 없음.
-#
-# ─────────────────────────────────────────────────────────────
-#
-# v3.15.0 주요 변경사항 (2026-09-24):
-# - A36 신설 (말하려다 만 입 금지 — No Aborted Mouth) — SYSTEM_PROMPT 전역.
-#   * Mr. MOON 진단: "지아가 경비원을 본다. 입이 열렸다 닫힌다. — 여전히 이런
-#     표현이 남아 있다."
-#   * 근본 원인: 엔진 자체의 GOOD 예시 4곳이 이 표현을 가르치고 있었다.
-#     - A30 유형3 GOOD: "시선을 돌린다. 입을 연다."
-#     - A17 부정문 대체: "대답하지 않는다" → "입을 다문다"
-#     - ROMANCE 부스터 6번 GOOD: "그가 말하려 한다. ... 그의 입이 닫힌다."
-#     - DRAMA 부스터 3번: "망설임을 명시 (호흡, 시선의 머묾, 멈춤)"
-#     금지 룰이 없는 상태에서 모범 예시가 오히려 입 여닫기를 권장한 셈.
-#   * 해결: 4곳 예시를 딴소리·행동·외부 사건으로 교체 + A36 금지 룰 신설.
-#   * A36 처리법 3종: ① 딴소리(A34 검문2 원리) ② 행동이 결정이 됨
-#     ③ 상대·세계가 먼저 움직여 망설임을 끊음.
-#   * 금지 표현군: 입이 열렸다 닫힌다 / 입술이 달싹인다 / 말을 삼킨다 /
-#     말하려다 만다 / 침을 삼킨다·숨 들이쉬기(뜸 들이기 용도) /
-#     대사 직전 "입을 연다·입을 뗀다"(군더더기).
-#   * 예외: 소리 없는 입모양 자체가 플롯상 정보일 때(수화, 유리창 너머 말 등).
-#   * 확장 — 하다 만 동작("~했다(가) 되돌린다" 문형)까지 같은 룰로 포괄.
-#     실측 근거: 「순환」 Beat 2(v3.14.0 출력) 한 비트에 같은 문형 3회 —
-#     "입이 열렸다 닫힌다" / "지갑을 꺼냈다 넣는다" / "엄지가 알림 위에서
-#     멈췄다가 화면을 끈다". 입만 막으면 손·손가락으로 옮겨가므로 문형 단위로 차단.
-#     허용 조건: 되돌리는 순간 관객이 새 정보를 얻을 때만.
-#   * A30과 달리 작가주의 작품에도 적용 — 연출 디테일이 아니라 AI 상투구이므로.
-#
-# - 헐리우드 작법 체크리스트 ⑧ 추가(7가지 → 8가지), 18번 AI ESCAPE에 A36 항목 추가.
-# - main.py 수정 불필요 — 전부 prompt.py 내부. 함수 시그니처 불변(백워드 호환 유지).
-#   stream_ai()가 모든 호출에 SYSTEM_PROMPT를 쓰므로 비트 집필·특정 비트
-#   재집필 양쪽에 동일 적용.
+# - A36~A38은 SYSTEM_PROMPT가 아니라 시퀀스/씬 프롬프트에만 주입한다.
+#   15비트 경로에는 전혀 영향 없음. 기존 함수 시그니처 불변(백워드 호환).
 #
 # ─────────────────────────────────────────────────────────────
 #
@@ -779,8 +693,8 @@
 # - Creator JSON 자동 로더
 # ─────────────────────────────────────────────────────────────
 
-ENGINE_VERSION = "v3.15.5"
-ENGINE_BUILD_DATE = "2026-09-25"
+ENGINE_VERSION = "v4.0.0"
+ENGINE_BUILD_DATE = "2026-10-01"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1375,9 +1289,8 @@ AI가 인물의 긴장·생각·주저를 표현할 때 자동으로 꺼내 쓰�
 
 ✅ GOOD — 멈춤을 행동·시선·대사 부재로 표현:
   민수가 그녀를 본다. 답하지 않는다.
-  민수가 그녀를 본다. 대답 대신 계산서를 집어 든다.
+  민수가 그녀를 본다. 시선을 돌린다. 입을 연다.
   → 멈춤은 '무엇을 하지 않는가 / 무엇으로 채우는가'로 표현한다. 숫자가 아니다.
-  → 단, 입을 열었다 닫는 식의 '말하려다 만 입'으로 채우지 마라(A36).
 
 원칙:
   - 초 단위 시간 표기로 멈춤·반응 지연·침묵의 길이를 처방하지 마라.
@@ -1764,119 +1677,6 @@ def _dict_to_text(d: dict, indent: int = 0) -> str:
 # 비트 집필 단계에서 캐릭터 직업을 스캔해 휘발 방지를 위해 재주입.
 # ═══════════════════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════════════
-# ★ v3.15.5 — 직업·시대 오탐 차단
-# 실측(「순환」, 현대 서울 지하철 호러):
-#   직업: "전화가"→화가(예술전통) 21회, "주먹을 쥔다"→조직폭력, "검사 결과"→법률직.
-#   시대: "~하지만"→하지(미군정 사령관)=해방정국 131회, "해방이다"·"이상하다"
-#         →일제강점기, "순서대로"→삼국시대, "공기인지"→고려.
-#   "지수는 아무 말도 하지 않는다." 한 줄만으로 해방정국 블록(3,448자)이 주입됐다.
-#   시대 블록은 장르와 무관하게 모든 비트에 들어가므로 v3.1.2 이후 현대극 전반이 영향권.
-# 원칙: 팩 데이터(period_pack/profession_pack)는 그대로 두고, Writer 쪽 판정만 엄격화.
-# ═══════════════════════════════════════════════════════════
-import re as _re_det
-
-_HANGUL_RE = _re_det.compile(r'[\uAC00-\uD7A3]')
-_KO_PARTICLES = set("가는이의와과을를들도만에서요님은로께")
-
-# 일상 문장과 겹쳐 직업 판정에 쓰지 않는 키워드
-_PROFESSION_SKIP = {"주먹"}
-# 뒤따르는 말이 이러면 직업이 아니다
-_PROFESSION_NEG_AFTER = {
-    "화가": r'\s*(나|났|치밀|풀|솟|머리)',
-    "검사": r'\s*(결과|받|를\s*받|했|중|실|지)',
-}
-
-# 일상어와 겹쳐 시대 판정에 쓰지 않는 키워드
-_PERIOD_SKIP = {"하지", "이상", "해방", "대로", "기인", "신탁", "휴전", "국군"}
-
-
-def _is_hangul(ch: str) -> bool:
-    return bool(ch) and bool(_HANGUL_RE.match(ch))
-
-
-def _count_bounded(text: str, kw: str, neg_after: str = "") -> int:
-    """두 글자 이하 한글 키워드를 '독립 단어'로 쓰인 경우만 센다.
-    앞 글자가 한글이면 제외(전화가→화가 X), 뒤 글자가 한글이면 조사일 때만 인정."""
-    n, i = 0, text.find(kw)
-    while i != -1:
-        prev_ch = text[i - 1] if i > 0 else ""
-        nxt = i + len(kw)
-        next_ch = text[nxt] if nxt < len(text) else ""
-        ok = not _is_hangul(prev_ch)
-        if ok and _is_hangul(next_ch) and next_ch not in _KO_PARTICLES:
-            ok = False
-        if ok and neg_after and _re_det.match(neg_after, text[nxt:nxt + 8]):
-            ok = False
-        if ok:
-            n += 1
-        i = text.find(kw, i + 1)
-    return n
-
-
-def _detect_professions_for_writer(scan_text: str) -> list:
-    """직업 카테고리 감지 (Writer 전용 엄격 판정). 적중 수 내림차순."""
-    try:
-        import profession_pack as _PR
-    except Exception:
-        return []
-    text = scan_text or ""
-    low = text.lower()
-    scores = {}
-    for cat, kws in _PR.PROFESSION_KEYWORDS.items():
-        sc = 0
-        for kw in kws:
-            if not kw or kw in _PROFESSION_SKIP:
-                continue
-            if kw.isascii():
-                sc += len(_re_det.findall(r'\b' + _re_det.escape(kw.lower()) + r'\b', low))
-            elif len(kw) <= 2:
-                sc += _count_bounded(text, kw, _PROFESSION_NEG_AFTER.get(kw, ""))
-            else:
-                neg = _PROFESSION_NEG_AFTER.get(kw, "")
-                sc += _count_bounded(text, kw, neg) if neg else text.count(kw)
-        if sc > 0:
-            scores[cat] = sc
-    return [c for c, _ in sorted(scores.items(), key=lambda x: -x[1])]
-
-
-def _detect_periods_for_writer(scan_text: str, genre: str = "", historical: bool = False) -> list:
-    """시대 감지 (Writer 전용 엄격 판정).
-    - 사극·시대극이 아닌 작품: 그 시대의 연도가 '○○○○년'으로 명시된 경우에만 인정.
-    - 사극·시대극: 일상어 키워드 제외 + 짧은 키워드 경계 판정 + 최소 2점.
-    """
-    try:
-        import period_pack as _PK
-    except Exception:
-        return []
-    text = scan_text or ""
-    period_work = bool(historical) or _is_period(genre or "")
-    scores = {}
-    for pk, kws in _PK.PERIOD_KEYWORDS_MAP.items():
-        year_hits, word_hits = 0, 0
-        for kw in kws:
-            if not kw:
-                continue
-            if kw.isdigit() and len(kw) == 4:
-                # "2000원" 같은 숫자 오탐 방지 — 반드시 '년'이 붙은 연도만
-                year_hits += len(_re_det.findall(r'(?<!\d)' + kw + r'(?=\s*년)', text))
-                continue
-            if kw in _PERIOD_SKIP:
-                continue
-            if len(kw) <= 2 and all(_is_hangul(c) for c in kw):
-                word_hits += _count_bounded(text, kw)
-            else:
-                word_hits += text.count(kw)
-        score = year_hits * 2 + word_hits
-        if period_work:
-            if score >= 2:
-                scores[pk] = score
-        else:
-            if year_hits >= 1:
-                scores[pk] = score
-    return [k for k, _ in sorted(scores.items(), key=lambda x: -x[1])]
-
-
 def build_profession_block_for_writer(scan_text: str, max_categories: int = 3) -> str:
     """
     캐릭터/씬 플랜/로그라인 등 텍스트를 스캔해 직업 카테고리 감지 후,
@@ -1907,8 +1707,7 @@ def build_profession_block_for_writer(scan_text: str, max_categories: int = 3) -
     
     try:
         # 카테고리 감지
-        # ★ v3.15.5 — 엄격 판정으로 교체 (팩의 단순 포함 검사는 일상어 오탐)
-        cats = _detect_professions_for_writer(scan_text)
+        cats = PP.detect_profession_category(scan_text)
         if not cats:
             return ""
         
@@ -1956,8 +1755,7 @@ def build_profession_block_for_writer(scan_text: str, max_categories: int = 3) -
 # 비트 집필 단계에서 시대 키워드를 스캔해 휘발 방지를 위해 재주입.
 # ═══════════════════════════════════════════════════════════
 
-def build_period_block_for_writer(scan_text: str, max_periods: int = 2,
-                                  genre: str = "", historical: bool = False) -> str:
+def build_period_block_for_writer(scan_text: str, max_periods: int = 2) -> str:
     """
     로그라인/세계관/트리트먼트 등 텍스트를 스캔해 시대 키워드 감지 후,
     해당 시대 디테일 블록을 비트 집필용으로 포맷팅하여 반환.
@@ -1987,13 +1785,9 @@ def build_period_block_for_writer(scan_text: str, max_periods: int = 2,
 
     try:
         # period_pack의 공식 빌더를 그대로 사용 (Creator와 동일 포맷 유지)
-        # ★ v3.15.5 — 엄격 판정으로 시대 키를 먼저 정하고, 빌더에는 수동 지정으로 넘긴다
-        _keys = _detect_periods_for_writer(scan_text, genre=genre, historical=historical)
-        if not _keys:
-            return ""
         block = PPK.build_period_block(
             locked_text=scan_text,
-            period_keys=_keys,
+            period_keys=None,
             max_periods=max_periods,
         )
         if not block or not block.strip():
@@ -2633,9 +2427,7 @@ GENRE BOOSTER — DRAMA (드라마 비트 강제 규칙 v3.2)
    - 추상적 감정 서술 금지
 
 3. 결정의 순간 (Decision Moment)
-   - 망설임은 선택의 흔적으로 보인다 (가던 방향이 바뀐다, 하려던 말 대신
-     딴소리가 나온다, 쥐고 있던 것을 끝내 건넨다/안 건넨다)
-   - 호흡·입술·입 여닫기 같은 신체 미세반응으로 망설임을 처리하지 않는다 (A36)
+   - 인물이 선택하기 전 망설임을 명시 (호흡, 시선의 머묾, 멈춤)
    - 망설임 자체가 캐릭터를 정의
    - 자동적 반응 금지, 의식적 선택 보임
 
@@ -4041,7 +3833,7 @@ AI가 캐릭터의 "감정을 드러내지 않음"을 표현하려고 부정문�
 - "~지 않는다" 패턴은 씬당 최대 3회.
 - 연속 2문장 이상 부정문 금지.
 - 부정문 대신 긍정 행동으로 캐릭터 상태 표현.
-  · "대답하지 않는다" → "대답 대신 잔을 비운다" (입을 다문다 X — A36)
+  · "대답하지 않는다" → "입을 다문다"
   · "돌아보지 않는다" → "계속 앞만 본다"
   · "웃지 않는다" → "얼굴이 굳어 있다"
 
@@ -4292,13 +4084,9 @@ A22 "한 문장 = 한 샷"은 의미 단위 문제다 — 한 문장 안에 들�
    — 감정을 직접 설명하거나(화가 나/슬퍼), 정보를 대칭 완결하거나
      (A도 B도 안 했어), 표준 문어체 완성문으로 수렴하면 AI 과잉 말투 -> 다시 써라.
    — 말투 변형(사투리·고어·외국어)은 인물 설정에 근거가 있을 때만.
-⑧ 말하려다 만 입 · 하다 만 동작이 없는가? (입이 열렸다 닫힌다 / 입술이 달싹인다 /
-   말을 삼킨다 / 꺼냈다 넣는다 / 멈췄다가 끈다 / A36)
-   — '말 못 함'은 딴소리·행동·외부 사건으로 처리한다. 입·입술·숨으로 때우지 않는다.
-   — "~했다(가) 되돌린다" 문형은 되돌림이 새 정보를 줄 때만 허용.
 
-8가지를 통과한 지문은 사후 분단이 필요 없다.
-처음부터 8가지 통과한 지문을 써라. 특히 ⑥(사건)과 ⑦(대사) — 문장만 잘 쓰고
+7가지를 통과한 지문은 사후 분단이 필요 없다.
+처음부터 7가지 통과한 지문을 써라. 특히 ⑥(사건)과 ⑦(대사) — 문장만 잘 쓰고
 사건을 빠뜨리거나, 뜻만 전달하는 매끈한 대사를 쓰지 마라.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -4753,68 +4541,6 @@ GOOD: A가 말하면 B가 즉각 짧게 받아쳐 A의 말을 흔든다.
   사극·정적 드라마는 낮춘다(로코 심화는 ROMCOM 부스터가 담당).
 - 완급: 무조건 빠른 게 아니다. 결정적 한 방이나 침묵은 오히려 느리게.
   빠름은 느림이 있어야 산다.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-A36. 말하려다 만 입 · 하다 만 동작 금지 — No Aborted Mouth / Gesture
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-핵심: "입이 열렸다 닫힌다"는 AI의 대표 상투구다. 할 말이 있는데 못 하는
-순간을 입의 움직임으로 때우는 것 — 아무 일도 일어나지 않았다는 자백이다.
-관객은 입 모양을 보고 인물의 속을 알지 못한다. 그 순간 인물이 무엇을
-했는지(또는 대신 무슨 말을 했는지)만 본다.
-
-[금지 표현군 — 장르 불문, 작가주의 포함 항상 적용]
-아래는 '말 못 함 / 머뭇거림'을 입·입술·목·숨으로 때우는 표현이다.
-표현만 바꿔 돌려쓰는 것도 같은 위반이다.
-  · 입이 열렸다 닫힌다 / 입을 열었다 닫는다 / 입을 열었다가 다문다
-  · 입술이 달싹인다 / 입술만 움직인다 / 입술을 뗐다 붙인다
-  · 입을 다문다 / 입을 꾹 다문다 (머뭇거림·대답 회피의 대용일 때)
-  · 뭔가 말하려다 만다 / 말하려 한다 / 말을 삼킨다 / 말을 잇지 못한다
-  · 침을 삼킨다 / 숨을 들이쉬었다 내쉰다 (말 직전의 뜸 들이기 용도일 때)
-  · 대사 직전의 "입을 연다 / 입을 뗀다" (대사가 곧 입을 연 것이다. 군더더기)
-
-❌ BAD:
-  지아가 경비원을 본다. 입이 열렸다 닫힌다.
-  → 지아는 무엇을 원했고, 무엇을 포기했나? 화면에는 입만 있다. 사건 0.
-
-✅ GOOD — 세 가지 처리법 중 하나를 골라라:
-  1) 딴소리 — 하려던 말 대신 다른 말이 나온다 (A34 검문2와 같은 원리)
-     지아가 경비원을 본다.
-     지아		택배… 여기 맡겨도 돼요?
-  2) 행동 — 말 대신 한 행동이 결정이 된다
-     지아가 경비원 앞을 지나쳐 엘리베이터 버튼을 누른다. 한 번 더 누른다.
-  3) 상대·세계가 먼저 움직인다 — 망설임을 외부 사건이 끊는다
-     지아가 경비원을 본다. 경비원이 먼저 신문을 접는다.
-     경비원		704호 찾아왔죠?
-
-[확장 — 하다 만 동작 (같은 문형, 같은 위반)]
-입 여닫기는 대표 사례일 뿐이다. 손·손가락·물건으로 옮겨도 문형이 같다:
-"~했다(가) 되돌린다" — 시작한 동작을 곧바로 되돌려 아무 일도 없던 것으로 만든다.
-  · 지갑을 꺼냈다 넣는다 / 핸드폰을 들었다 내려놓는다
-  · 엄지가 알림 위에서 멈췄다가 화면을 끈다 / 손이 문고리에 갔다가 돌아온다
-  · 펜이 멈춘다 (쓰려다 못 쓰는 망설임 표시용일 때)
-❌ BAD:
-  지아가 가방 안을 더듬는다. 지갑을 꺼냈다 넣는다.
-  → 무엇을 하려다 왜 그만뒀는지 화면에 없다. 망설임 '표시'만 있다.
-✅ GOOD — 되돌리지 말고 끝까지 가게 하거나, 다른 것을 하게 하라:
-  지아가 가방 안을 더듬는다. 손에 잡히는 건 영수증 뭉치뿐이다. 출입증은 없다.
-  → 무엇이 없는지(출입증)가 보인다. 망설임 표시 대신 정보가 남는다.
-  지아가 알림을 밀어 지운다. '엄마' 세 줄이 한 번에 사라진다.
-  → 멈칫이 아니라 지웠다. 결정이 화면에 남는다.
-허용 조건 — 되돌림이 허용되는 경우는 하나뿐이다: 되돌리는 순간 관객이
-새 정보를 얻는다(무엇을 꺼내려 했는지 보인다 / 외부 사건이 되돌림을 강제한다).
-정보 없이 '망설인다'만 표시하는 되돌림은 금지.
-
-[판정 기준]
-  - '말 못 함'이나 '하다 맒'을 쓰고 싶으면 스스로 물어라: "그래서 인물은 그 대신 무엇을
-    했는가?" 답이 입·입술·숨이면 다시 써라. 답이 행동·딴소리·외부 사건이면 통과.
-  - 대사가 이어지는 경우, 대사 앞에 입의 동작을 쓰지 마라. 대사로 바로 들어간다.
-    특히 딴소리 대사가 바로 뒤에 오면 앞의 입 여닫기는 순수 군더더기다 — 삭제.
-  - 진짜로 소리 없이 입만 움직이는 게 플롯상 사실일 때(수화, 유리창 너머 말,
-    소리 죽인 입모양 신호)는 예외 — 그때는 입 모양이 곧 정보다.
-
-A36은 A30(정형 습관 동작)과 다르다. A30은 상업영화에만 걸리지만,
-A36은 작가주의 작품에도 걸린다 — 이것은 연출 디테일이 아니라 AI 상투구이기 때문이다.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SAFETY & CONTENT
@@ -6450,9 +6176,8 @@ ROMANCE_RULES = """
 
 6. 비트 끝은 '닿지 못한 채로' — 만족시키지 마라.
    ❌ '두 사람은 서로의 마음을 확인했다.'
-   ✅ '그가 "저기, 나—" 하는데 그녀의 전화가 울린다. 그녀가 전화를 받으며 먼저 돌아선다. 그가 그 등에 대고 "…조심히 가." 한다.'
+   ✅ '그가 말하려 한다. 전화가 울린다. 그녀가 먼저 돌아선다. 그의 입이 닫힌다.'
    → 매 비트 끝에서 감정이 해소되지 않아야 다음 비트를 본다.
-   → 못 한 말은 '입이 닫힌다'로 처리하지 않는다. 끊긴 말과 대신 나온 딴소리로 들린다(A36).
 
 7. 이별/재회 리듬 — 로맨스의 3막은 이별 후 재회다.
    2막 끝: 가장 아픈 이별 (오해, 선택, 희생)
@@ -8493,8 +8218,7 @@ def build_write_beat_prompt(
     
     # ★ v3.1.1 신규 블록 — Profession Pack 재주입 (휘발 방지)
     # 캐릭터 바이블 + 로그라인 + 씬 플랜 앞부분을 스캔해 직업 카테고리 감지 후 재주입
-    # ★ v3.15.5 — 인물 설정·로그라인만 스캔 (씬 플랜 본문은 행동 묘사라 오탐 다발)
-    profession_scan = (characters or "") + "\n" + (logline or "")
+    profession_scan = (characters or "") + "\n" + (logline or "") + "\n" + (scene_plan or "")[:3000]
     profession_block_text = build_profession_block_for_writer(profession_scan, max_categories=3)
 
     # ★ v3.1.2 신규 블록 — Period Pack 재주입 (시대 디테일 휘발 방지)
@@ -8507,9 +8231,7 @@ def build_write_beat_prompt(
         + "\n" + (treatment or "")[:4000]
         + "\n" + (story_elements or "")
     )
-    period_block_text = build_period_block_for_writer(
-        period_scan, max_periods=2, genre=genre, historical=historical,
-    )
+    period_block_text = build_period_block_for_writer(period_scan, max_periods=2)
 
     # ★ v3.1.4 신규 블록 — INSERT 시스템 (화면 텍스트 표기 강제)
     # 카톡·문자·이메일·유튜브·뉴스 등 화면 안 텍스트를 표준 표기로 강제.
@@ -9162,10 +8884,6 @@ AI가 자주 저지르는 엔딩 실수:
      초 단위 멈춤 연출("5초간 멈춘다" 등) — 작가주의 작품은 면제
    ★ 첫 등장 괄호 정보 제한(A31, v3.8.2):
      첫 등장 괄호는 (나이대, 성별)만 / 외양·복식·표정·소품 금지(미술·의상·캐스팅 영역)
-   ★ 말하려다 만 입 · 하다 만 동작 금지(A36, v3.15.0, 작가주의 포함 전 작품):
-     입이 열렸다 닫힌다 / 입술이 달싹인다 / 말을 삼킨다 / 대사 직전 "입을 연다" /
-     꺼냈다 넣는다 / 멈췄다가 끈다 등 "~했다 되돌린다" 문형 —
-     딴소리·행동·외부 사건으로 바꿔라 (되돌림이 새 정보를 줄 때만 허용)
    — 1개라도 해당되면 다시 써라.
 19. ★ 카메라 매뉴얼체 금지 — 지문은 문단이다. 동작 하나씩 줄바꿈 금지.
    여러 동작(3~5개)을 하나의 문단으로 묶어라. 1문단 = 2~4줄.
@@ -9592,9 +9310,524 @@ def build_targeted_rewrite_prompt(
 재집필된 시나리오 본문만 출력.
 씬 헤딩(S#N. INT./EXT. ...) 포함.
 한국 시나리오 표준 포맷 (지문↔대사 사이 빈 줄).
-INTERNAL 메모는 [소품 상태] 블록과 GENRE_BOOSTER_CHECK 태그 블록만 허용, 본문 맨 끝에 둔다.
-★ 변경 보고 금지 — 수정 지시를 어떻게 반영했는지 설명하지 마라.
-  "대조", "해소 확인", "공통 제약 확인", "변경 사항 요약", "직전/직후 비트 연결",
-  체크리스트(□ ✅), HTML 주석(<!-- -->), 임의의 _CHECK 태그를 출력하지 않는다.
-  점검은 속으로 하고, 결과는 원고 자체로 보여라.
+INTERNAL 메모(소품 상태/GENRE_BOOSTER_CHECK 등)도 평소대로 작성.
+""".strip()
+
+
+# ═══════════════════════════════════════════════════════════
+# ★ v4.0.0 신규 — SCENE LIST MODE (씬리스트 기준 시퀀스 집필)
+# Creator Engine v2.8.2 writer_handoff_v28 수신 시 작동.
+# 15비트 자유 집필 대신, Creator가 잠근 씬리스트를 시퀀스 단위로 집필한다.
+# 구조 유형(상황 추진·관계 아크 등)과 무관하게 호출 방식이 같다 — 골격별 분기 없음.
+# 씬리스트가 없으면 이 블록은 전혀 쓰이지 않는다 (기존 15비트 경로 그대로).
+# 데이터 로드·대조 검증은 scene_list_writer.py(파이썬)가 담당한다.
+# ═══════════════════════════════════════════════════════════
+
+A36_SCENE_LIST_LOCK = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+A36. 씬리스트 고정 — Scene List Lock (씬리스트 모드 전용)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+이 작품의 씬리스트는 기획 단계(Creator Engine)에서 작가가 잠근 확정본이다.
+너는 씬을 설계하지 않는다. 확정된 씬을 장면으로 옮긴다.
+
+[절대 금지]
+① 씬리스트에 없는 씬을 추가하지 마라. 새 S# 번호를 만들지 마라.
+② 씬을 빼지 마라. 이번 시퀀스의 씬은 하나도 빠짐없이 쓴다.
+③ 장소를 바꾸지 마라. 씬 헤딩의 장소는 씬리스트 표기를 그대로 옮긴다.
+④ 시간(낮·밤·새벽 등)과 INT/EXT를 바꾸지 마라.
+⑤ 씬 순서를 바꾸지 마라. 번호 순서 그대로 쓴다.
+⑥ 씬을 쪼개지 마라. 같은 씬 안의 시선 이동은 CUT TO: 로 처리하고 번호는 하나다.
+⑦ 씬리스트의 '내용' 한 줄에 적힌 사건을 빼거나 다른 사건으로 바꾸지 마라.
+
+[허용]
+· 씬 안의 행동·대사·지문의 구체화 — 이것이 너의 일이다.
+· 씬리스트 '등장'에 없는 무명 단역(신도·경찰·조문객 등)이 씬 안에 잠깐 등장하는 것.
+  단, 이름 있는 주요 인물을 씬리스트에 없는 씬에 끼워 넣지 마라.
+
+[헤딩 형식 — 씬리스트 그대로]
+S#번호. INT. 장소 — 시간
+· 번호·장소·시간은 아래 [이번 시퀀스 씬리스트]에 적힌 그대로 쓴다.
+· 출력 후 파이썬이 씬리스트와 대조해 이탈 씬 번호를 표시한다.
+""".strip()
+
+
+A37_DIALOGUE_MODE_RULE = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+A37. 씬별 대사 방식 — Dialogue Mode per Scene (씬리스트 모드 전용)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+씬리스트의 '대사 방식' 칸이 그 씬의 대사 운용을 정한다.
+기본값은 서브텍스트(간극형)다. 칸이 비어 있거나 모르는 값이면 서브텍스트로 쓴다.
+각 방식은 A34(서브텍스트)·A35(핑퐁)를 아래처럼 유지하거나 해제한다.
+해제는 그 씬에만 적용된다. 다음 씬에서 원래 규칙으로 돌아온다.
+
+[서브텍스트 — 간극형 · 기본값]
+· 말과 속뜻을 어긋나게 한다. 원하는 것을 직접 말하지 않고 다른 말로 우회한다.
+· 감정·상황·배경을 대사로 설명하지 않는다.
+· 화제 돌리기(회피)도 이 방식에 포함된다. 곤란한 질문에 딴 얘기로 빠진다.
+· A34 네 검문 전부 적용. A35 적용.
+
+[대결 — 압박형]
+· 서로의 요구가 정면으로 부딪힌다. 심문·협박·거래 결렬.
+· 요구 → 거절 → 더 센 요구. 짧은 말이 빠르게 오간다.
+· 씬이 끝나면 한쪽이 무언가를 잃는다(자리·정보·체면·물건).
+· 요구는 정면이어도 약점·두려움 같은 속내는 숨긴다 → A34 유지. A35 강하게.
+
+[정보]
+· 관객이 알아야 할 정보가 오가는 씬이다.
+· 정보는 반드시 갈등이나 거래 속에서 오간다. 주는 쪽은 대가를 요구하거나 숨기려 하고,
+  받는 쪽은 캐묻거나 의심한다.
+· 서로 이미 아는 사실을 관객 들으라고 주고받는 대사("너도 알다시피") 금지.
+· A34 검문 2·4 적용. A35 적용.
+
+[고백 — 폭발형]
+· 참던 말이 터지는 씬이다. 감춰온 것을 직접 말한다.
+· ★ 이 씬에 한해 A34 검문 1(역전)·검문 2(감정 우회)와 "Too Wet" 금지(대사 부분),
+  AI ESCAPE의 '속내 직접 발화 금지'를 해제한다.
+· 해제는 대사에만 해당한다. 지문의 감정 설명 금지(A1)는 그대로다.
+· 터지기 전에 참는 과정을 먼저 쓴다. 참던 쪽이 결국 무너져야 터짐이 산다.
+· 터지는 말은 짧고 거칠다. 다듬어진 연설로 쓰지 마라.
+· 그 말하기 자체가 판을 뒤집는 사건이므로 A35의 긴 대사 예외를 쓸 수 있다.
+· 작품 전체에서 소수 씬만 이 방식이다. 남발하지 않는다.
+
+[엇박]
+· 말과 상황, 말과 행동이 어긋나 웃음이나 아이러니를 만든다. 코미디 리듬.
+· 진지한 말을 하는데 행동이 배신한다 / 상황은 심각한데 말이 엉뚱하다.
+· 로맨틱 코미디라면 ROMCOM 부스터의 스크루볼 티키타카와 합류한다.
+· A34·A35 적용.
+
+[행동 — 침묵형]
+· 대사를 최소화하고 행동으로 진행한다. 지문 중심.
+· ★ 이 씬에 한해 A35(핑퐁)와 분량 기준의 '대사 2~4개 교환'을 해제한다.
+  대사가 0~2줄이어도 된다.
+· 대신 물리·정보·관계 중 하나가 반드시 바뀐다. 아무것도 안 바뀌면 실패.
+· 남는 대사는 A34 적용.
+""".strip()
+
+
+A38_SPEECH_MATRIX_RULE = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+A38. 말투 관계표 준수 — Speech Matrix (씬리스트 모드 전용)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+각 씬 아래의 [말투] 표는 그 씬 등장인물 쌍의 존대·반말 관계다. 그대로 따른다.
+
+· 존대: 해요체·합쇼체. 반말 어미(~어, ~야, ~지, ~냐)를 섞지 않는다.
+· 반말: 친밀·대등. 존대 어미(~요, ~습니다)를 섞지 않는다.
+· 하대: 멸시·위계가 실린 반말. 반말과 구분된다 — 같은 반말 어미라도 상대를
+  낮추는 호칭·명령으로 위계를 드러낸다.
+· 혼용: 상황에 따라 오간다. 표의 이유를 보고 어느 순간 바뀌는지 판단한다.
+· 표에 '전환 후'가 적혀 있으면 이 씬은 이미 전환된 뒤다. 바뀐 말투·호칭으로 쓴다.
+· 호칭도 표를 따른다. 표에 없는 호칭을 새로 만들지 않는다.
+· 사투리는 [인물 말투] 설정의 강도와 발동 조건대로만 쓴다. 어미·억양으로 살리고
+  명사만 바꾸는 가짜 사투리는 금지(A34).
+· 표에 없는 상대(무명 단역·시신·전화 상대 등)에게 하는 말은 인물 기본 말투를 따른다.
+
+출력 후 파이썬이 대사 종결어미로 표와 어긋난 대사를 뽑는다. 최종 판단은 작가가 한다.
+""".strip()
+
+
+# 씬리스트의 대사 방식 값 → 정규 이름. 요청서 표기(간극형 등)도 받아들인다.
+DIALOGUE_MODE_ALIASES = {
+    "서브텍스트": "서브텍스트", "간극": "서브텍스트", "간극형": "서브텍스트",
+    "회피": "서브텍스트", "회피형": "서브텍스트",
+    "대결": "대결", "압박": "대결", "압박형": "대결",
+    "정보": "정보",
+    "고백": "고백", "폭발": "고백", "폭발형": "고백",
+    "엇박": "엇박", "엇박형": "엇박",
+    "행동": "행동", "침묵": "행동", "침묵형": "행동",
+}
+
+
+def normalize_dialogue_mode(mode: str) -> str:
+    m = (mode or "").strip()
+    return DIALOGUE_MODE_ALIASES.get(m, "서브텍스트")
+
+
+def _slw():
+    """scene_list_writer 지연 import (파일 부재 시 None)."""
+    try:
+        import scene_list_writer as SLW
+        return SLW
+    except Exception:
+        return None
+
+
+def _proxy_beat_for_seq(handoff: dict, seq_no: int) -> int:
+    """BJND Cost 단계 힌트용 대리 비트 번호.
+    Creator 구조 유형마다 비트 수가 달라(15/16/10/11…) 비트 번호를 직접 쓰지 않고
+    막(act)과 막 안의 위치로 환산한다. 골격별 분기 없음."""
+    seqs = handoff.get("sequences", []) or []
+    q = next((x for x in seqs if int(x.get("seq", 0)) == int(seq_no)), {})
+    act = int(q.get("act") or 0)
+    if act == 1:
+        return 2
+    if act == 3:
+        return 13
+    act2 = [int(x.get("seq")) for x in seqs if int(x.get("act") or 0) == 2]
+    if act2 and int(seq_no) in act2:
+        return 6 if act2.index(int(seq_no)) < len(act2) / 2 else 10
+    return 8
+
+
+def _scene_block_for_prompt(SLW, handoff: dict, scene: dict, locked_text: str = "") -> str:
+    mode = normalize_dialogue_mode(scene.get("dialogue_mode", ""))
+    raw_mode = (scene.get("dialogue_mode") or "").strip()
+    mode_label = mode if (not raw_mode or raw_mode == mode) else f"{mode} (씬리스트 표기: {raw_mode})"
+    chars = ", ".join(SLW.normalize_name(c) for c in scene.get("characters", [])) or "-"
+    out = (f"{SLW.format_heading(scene)}\n"
+           f"   · 등장: {chars}\n"
+           f"   · 대사 방식: {mode_label}\n"
+           f"   · 내용: {scene.get('summary', '')}\n"
+           f"   · 말투:\n{SLW.build_speech_table_for_scene(handoff, scene)}")
+    if locked_text:
+        out += ("\n   · ★ 작가 확정본(잠금) — 이 씬은 아래 원문을 한 글자도 바꾸지 말고 그대로 옮겨라.\n"
+                "     ┌────────\n" + locked_text.strip() + "\n     └────────")
+    return out
+
+
+def build_write_sequence_prompt(
+    genre: str,
+    handoff: dict,
+    seq_no: int,
+    prev_last_scene_text: str = "",
+    characters: str = "",
+    treatment: str = "",
+    tone: str = "",
+    logline: str = "",
+    world: str = "",
+    story_elements: str = "",
+    opening_strategy: str = "",
+    bjnd_data: str = "",
+    ending_payoff: str = "",
+    ending_payoff_type: str = "",
+    fact_based: bool = False,
+    historical: bool = False,
+    historical_type: str = "",
+    genre_essence: dict = None,
+    cycle_design: str = "",
+    setup_payoff_table: str = "",
+    physical_cost_plan_text: str = "",
+    antagonist_actions: str = "",
+    locked_scene_texts: dict = None,
+    user_instruction: str = "",
+) -> str:
+    """★ v4.0.0 — 시퀀스 1회 집필 프롬프트 (W2).
+
+    호출에 들어가는 것:
+      · 이번 시퀀스의 씬리스트 (씬마다 대사 방식·말투표 포함)
+      · 앞 시퀀스 마지막 씬 전문
+      · 다음 시퀀스 첫 씬 한 줄
+    기존 안전망(장르 본질·부스터·BJND·직업/시대 팩·INSERT·소품·A30)은 그대로 재사용.
+    15비트 전용 지시(씬 플랜 찾기·장소 분산·조연 추가)는 넣지 않는다 — 씬리스트와 충돌.
+    """
+    SLW = _slw()
+    if SLW is None:
+        return "[오류] scene_list_writer.py가 없습니다. 파일을 함께 배포하세요."
+    locked_scene_texts = locked_scene_texts or {}
+
+    seqs = SLW.seq_numbers(handoff)
+    first_seq, last_seq = (seqs[0], seqs[-1]) if seqs else (seq_no, seq_no)
+    q = SLW.get_sequence(handoff, seq_no)
+    scenes = SLW.get_seq_scenes(handoff, seq_no)
+    story = (handoff.get("storyline") or {}).get(int(seq_no), {})
+    names = SLW.seq_character_names(handoff, seq_no)
+
+    # 다음 시퀀스 첫 씬 한 줄
+    next_line = ""
+    if int(seq_no) != int(last_seq):
+        nxt = SLW.get_seq_scenes(handoff, seqs[seqs.index(int(seq_no)) + 1])
+        if nxt:
+            next_line = f"{SLW.format_heading(nxt[0])} — {nxt[0].get('summary', '')}"
+
+    # ── 기존 안전망 재사용 ──
+    gr = _genre_text(genre)
+    genre_override = get_genre_override(genre)
+    genre_enforcement = get_genre_enforcement(genre)
+    if genre_essence is None:
+        genre_essence = extract_genre_essence({}, genre_fallback=genre)
+    essence_injection = build_genre_essence_injection(genre_essence)
+    bjnd_block_text = build_bjnd_block(bjnd_data) if bjnd_data else ""
+    bjnd_enforcer_text = get_bjnd_scene_enforcer(_proxy_beat_for_seq(handoff, seq_no))
+    sensibility_text = get_creator_sensibility()
+    scene_list_text = "\n".join(s.get("summary", "") for s in scenes)
+    profession_block_text = build_profession_block_for_writer(
+        (characters or "") + "\n" + (logline or "") + "\n" + scene_list_text, max_categories=3)
+    period_block_text = build_period_block_for_writer(
+        (world or "") + "\n" + (logline or "") + "\n" + (treatment or "")[:4000]
+        + "\n" + (story_elements or ""), max_periods=2)
+    insert_system_block = get_insert_system_module()
+    prop_continuity_block = get_prop_continuity_module()
+    arthouse_scan = ((genre or "") + "\n" + (logline or "") + "\n" + (world or "")
+                     + "\n" + (treatment or "")[:4000] + "\n" + (story_elements or ""))
+    direction_repetition_block = (A30_ARTHOUSE_LICENSE if _detect_arthouse_writer(arthouse_scan)
+                                  else A30_DIRECTION_REPETITION_BLOCK)
+    genre_booster_block = get_genre_booster_module(genre, historical=historical)
+    helper_character_block = get_helper_character_rule()
+    genre_booster_check_block = get_genre_booster_check_block(genre, historical=historical)
+    fact_based_block = get_fact_based_rules(fact_based)
+    historical_block = get_historical_film_rules(historical, historical_type)
+
+    # ── 첫 시퀀스 = 오프닝 / 마지막 시퀀스 = 엔딩 ──
+    opening_block = ""
+    if int(seq_no) == int(first_seq):
+        creator_open = ""
+        if opening_strategy and opening_strategy.strip():
+            creator_open = ("[이 작품의 오프닝 전략 — Creator 결정 사항, 첫 씬에 반영]\n"
+                            + opening_strategy.strip())
+        opening_block = (
+            "[⚡ 오프닝 — 이 시퀀스의 첫 씬이 영화의 첫 장면이다]\n"
+            + (creator_open + "\n\n" if creator_open else "")
+            + get_opening_mastery() + "\n\n" + get_opening_dna_instruction(genre)
+            + "\n\n★ 첫 씬의 첫 지문에 배경 설명·시대 자막·인물 소개 지문을 쓰지 마라."
+            + "\n★ 오프닝 기법은 씬리스트의 첫 씬 내용 안에서 구현한다. 씬을 추가하지 않는다."
+        )
+    ending_block = ""
+    if int(seq_no) == int(last_seq):
+        ending_block = build_ending_rule_block(ending_payoff_type, ending_payoff)
+        if not ending_block:
+            ending_block = ("[엔딩 — 이 시퀀스의 마지막 씬이 영화의 마지막 장면이다]\n"
+                            "장르가 관객과 맺은 약속을 회수하라. 주인공의 마지막 행동으로 변화를 보여줘라.")
+
+    # ── 씬리스트 데이터 블록 ──
+    scene_blocks = "\n\n".join(
+        _scene_block_for_prompt(SLW, handoff, s, locked_scene_texts.get(int(s.get("no")), ""))
+        for s in scenes)
+    voice_block = SLW.build_voice_block(handoff, names)
+    core_block = SLW.build_core_block(handoff, names)
+    state_block = SLW.build_state_block(handoff, q.get("beats") or [])
+
+    seq_head = f"시퀀스 {seq_no} / {len(seqs)}"
+    if q.get("act"):
+        seq_head += f" · {q.get('act')}막"
+    if q.get("label"):
+        seq_head += f" · {q.get('label')}"
+
+    story_lines = []
+    for k, lab in (("summary", "요약"), ("conflict", "갈등"), ("emotion", "감정"), ("hook", "끝 훅")):
+        if story.get(k):
+            story_lines.append(f"  · {lab}: {story[k]}")
+
+    v28_global = []
+    for lab, txt in (("행동 사이클(A28)", cycle_design), ("Setup-Payoff", setup_payoff_table),
+                     ("주인공 대가 단계(A29)", physical_cost_plan_text),
+                     ("적대자 능동 행위", antagonist_actions)):
+        if txt and str(txt).strip():
+            v28_global.append(f"[{lab} — 씬리스트와 어긋나면 씬리스트 우선]\n{str(txt).strip()[:1500]}")
+
+    prev_block = ""
+    if prev_last_scene_text and prev_last_scene_text.strip():
+        prev_block = ("[앞 시퀀스의 마지막 씬 — 전문. 감정·소품·시간을 이어받아라]\n"
+                      + prev_last_scene_text.strip()[:4000])
+    next_block = ""
+    if next_line:
+        next_block = ("[다음 시퀀스의 첫 씬 — 한 줄. 이 씬으로 자연스럽게 넘어가게 끝내라]\n" + next_line)
+
+    instr_block = ""
+    if user_instruction and user_instruction.strip():
+        instr_block = ("[작가 지시 — 최우선. 단, 씬리스트 고정(A36)은 깨지 않는다]\n"
+                       + user_instruction.strip())
+
+    first_no = scenes[0].get("no") if scenes else "?"
+    last_no = scenes[-1].get("no") if scenes else "?"
+
+    return f"""
+[TASK] {seq_head} 집필 — 씬리스트 모드 (S#{first_no} ~ S#{last_no}, {len(scenes)}씬)
+시퀀스 목표: {q.get('goal', '')}
+
+아래 [이번 시퀀스 씬리스트]의 씬을 번호 순서대로, 빠짐없이, 한국 표준 시나리오 서식으로 집필하라.
+
+{instr_block}
+
+{A36_SCENE_LIST_LOCK}
+
+{A37_DIALOGUE_MODE_RULE}
+
+{A38_SPEECH_MATRIX_RULE}
+
+{essence_injection}
+[장르]
+{gr}
+{genre_override}
+
+{genre_enforcement}
+
+[로그라인] {logline or '(없음)'}
+{opening_block}
+{ending_block}
+
+[이번 시퀀스 개요 — Creator]
+{chr(10).join(story_lines) if story_lines else '  (개요 없음)'}
+
+{prev_block}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[이번 시퀀스 씬리스트 — 잠금 확정본, 이대로 집필]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{scene_blocks}
+
+{next_block}
+
+[인물 말투 — Creator character_voice]
+{voice_block or '  (없음)'}
+
+[인물 뼈대 — Creator character_core. 결함은 행동으로, 상처는 사건으로 드러낸다. 설명하지 마라]
+{core_block or '  (없음)'}
+
+[상태 목표 — 이 시퀀스 비트들의 감정 축 수치. 장면의 압력 방향 참고용, 수치를 대사로 쓰지 마라]
+{state_block or '  (없음)'}
+
+[캐릭터 바이블 — 참고]
+{(characters or '')[:3000]}
+
+{bjnd_block_text}
+
+{bjnd_enforcer_text}
+
+{sensibility_text}
+
+{chr(10).join(v28_global)}
+
+{profession_block_text}
+
+{period_block_text}
+
+{insert_system_block}
+
+{prop_continuity_block}
+
+{direction_repetition_block}
+
+{genre_booster_block}
+
+{helper_character_block}
+
+{genre_booster_check_block}
+
+[세계관]
+{(world or '')[:1500]}
+
+[트리트먼트 — 참고. 씬리스트와 어긋나면 씬리스트 우선]
+{(treatment or '')[:3000]}
+
+{f"[톤 문서]{chr(10)}{(tone or '')[:1500]}" if tone else ""}
+{fact_based_block}
+{historical_block}
+{f"[핵심 요소 — 해당 씬에 반영]{chr(10)}{story_elements}" if story_elements else ""}
+
+[집필 규칙]
+1. 씬 수 = 씬리스트 씬 수({len(scenes)}씬). 번호·장소·시간·INT/EXT는 씬리스트 그대로.
+2. 각 씬의 '내용' 한 줄이 그 씬의 사건이다. 욕망과 장애물이 부딪혀 무언가가 바뀌게 써라.
+3. 각 씬의 '대사 방식'을 A37대로 지킨다. 같은 시퀀스 안에서도 씬마다 방식이 다르다.
+4. 각 씬의 '말투' 표를 A38대로 지킨다.
+5. 분량: 1씬 600~800자 기준. '행동' 방식 씬은 짧아도 되지만 이미지가 강해야 한다.
+6. 지문: 카메라가 보는 것만, 현재형 능동, 한 문장 = 한 샷, 연속 동작은 한 문장으로.
+   시간 정밀 표기(숫자 초) 금지 — 연출의 영역이다. 필요하면 '잠깐', '한참', '[긴 정적]'.
+7. 첫 등장 인물 괄호는 (나이대, 성별)만. 이후 표기는 이름만.
+8. 대사 형식: "캐릭터명<TAB><TAB>대사" 한 줄. 지문↔대사 사이 빈 줄 1개. 씬 사이 빈 줄 2개.
+9. 따옴표는 둥근 따옴표(‘’ “”)를 쓴다.
+10. 앞 시퀀스 마지막 씬과 감정·소품·시간이 이어지게 시작하고,
+    다음 시퀀스 첫 씬으로 넘어갈 압력을 남기고 끝낸다.
+
+[OUTPUT FORMAT — 엄격 준수]
+★ 헤더·제목·설명 없이 첫 줄을 S#{first_no} 씬 헤딩으로 시작한다.
+★ BLOCK 1 = 시나리오 본문만. 메타 설명 금지.
+★ BLOCK 1이 끝난 뒤에만 아래 마커로 내부 메모를 쓴다. 마커 밖에 메모를 쓰면 원고에 유출된다.
+
+<WRITER_NOTES_BEGIN>
+- 씬리스트 준수: 쓴 씬 번호 나열
+- 대사 방식 점검: 씬별 방식 1줄씩 (예: S#12 행동 — 대사 1줄, 관계 변화)
+- 말투표 점검: 전환 후 말투를 적용한 쌍
+- 장르 드라이브: 이 시퀀스에서 작동한 장르 장치
+<WRITER_NOTES_END>
+""".strip()
+
+
+def build_rewrite_scene_prompt(
+    genre: str,
+    handoff: dict,
+    scene_no: int,
+    current_scene_text: str,
+    prev_scene_text: str = "",
+    next_scene_text: str = "",
+    characters: str = "",
+    tone: str = "",
+    logline: str = "",
+    world: str = "",
+    fact_based: bool = False,
+    historical: bool = False,
+    historical_type: str = "",
+    genre_essence: dict = None,
+    user_instruction: str = "",
+) -> str:
+    """★ v4.0.0 — 씬 1개 재집필 프롬프트 (W6).
+    씬리스트 고정(A36)·대사 방식(A37)·말투표(A38)를 그대로 적용한다."""
+    SLW = _slw()
+    if SLW is None:
+        return "[오류] scene_list_writer.py가 없습니다. 파일을 함께 배포하세요."
+    scene = next((s for s in handoff.get("scenes", []) if int(s.get("no")) == int(scene_no)), {})
+    names = [SLW.normalize_name(c) for c in scene.get("characters", [])]
+    if genre_essence is None:
+        genre_essence = extract_genre_essence({}, genre_fallback=genre)
+    arthouse_scan = (genre or "") + "\n" + (logline or "") + "\n" + (world or "")
+    direction_repetition_block = (A30_ARTHOUSE_LICENSE if _detect_arthouse_writer(arthouse_scan)
+                                  else A30_DIRECTION_REPETITION_BLOCK)
+    instr = (user_instruction or "").strip() or "(지시 없음 — 씬리스트·대사 방식·말투표 기준으로 전체 강화)"
+    prev_block = f"[직전 씬 — 전문]\n{prev_scene_text.strip()[:3000]}" if prev_scene_text.strip() else ""
+    next_block = f"[직후 씬 — 전문. 이 씬으로 이어지게 끝내라]\n{next_scene_text.strip()[:2000]}" if next_scene_text.strip() else ""
+
+    return f"""
+[TASK] S#{scene_no} 한 씬만 다시 쓰기 — 씬리스트 모드
+
+[작가 수정 지시 — 최우선. 단, 씬리스트 고정(A36)은 깨지 않는다]
+{instr}
+
+{A36_SCENE_LIST_LOCK}
+
+{A37_DIALOGUE_MODE_RULE}
+
+{A38_SPEECH_MATRIX_RULE}
+
+{build_genre_essence_injection(genre_essence)}
+[장르]
+{_genre_text(genre)}
+{get_genre_override(genre)}
+
+[이 씬의 씬리스트 — 잠금 확정본]
+{_scene_block_for_prompt(SLW, handoff, scene) if scene else f'S#{scene_no} (씬리스트에서 찾지 못함 — 현재 헤딩 유지)'}
+
+[인물 말투]
+{SLW.build_voice_block(handoff, names) or '  (없음)'}
+
+[인물 뼈대]
+{SLW.build_core_block(handoff, names) or '  (없음)'}
+
+[캐릭터 바이블 — 참고]
+{(characters or '')[:2500]}
+
+{prev_block}
+
+[현재 원고 — 다시 쓸 씬]
+{current_scene_text.strip()}
+
+{next_block}
+
+{direction_repetition_block}
+
+{get_genre_booster_module(genre, historical=historical)}
+
+{get_fact_based_rules(fact_based)}
+{get_historical_film_rules(historical, historical_type)}
+{f"[톤 문서]{chr(10)}{(tone or '')[:1200]}" if tone else ""}
+
+[재집필 원칙]
+1. 작가 지시를 최우선 반영한다.
+2. 강점은 유지하고 약점만 고친다. 통째로 갈아엎지 마라.
+3. 씬 번호·장소·시간·INT/EXT는 씬리스트 그대로. 씬을 쪼개거나 다른 씬을 만들지 않는다.
+4. 직전·직후 씬과 감정·소품·시간이 이어지게 쓴다.
+5. 시간 정밀 표기(숫자 초) 금지. 따옴표는 둥근 따옴표.
+
+[OUTPUT FORMAT]
+★ S#{scene_no} 한 씬만 출력한다. 첫 줄은 씬 헤딩. 다른 씬·설명·메모를 쓰지 마라.
 """.strip()

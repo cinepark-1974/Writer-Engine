@@ -1,3 +1,13 @@
+# ─────────────────────────────────────────────────────────────
+# BLUE JEANS SCREENPLAY WRITER ENGINE — main.py
+# v4.0.0 (2026-10-01) — 씬리스트 모드 신설 (Creator v2.8.2 writer_handoff_v28)
+#   * STEP 1 JSON 로드 시 씬리스트 자동 감지. 없으면 "씬리스트 없음" 표시 + 15비트 방식.
+#   * 씬리스트 모드: 15비트 씬 플랜·비트 집필·권역 검증 대신 시퀀스 집필 섹션 표시.
+#   * 시퀀스별 씬리스트 대조(W3)·말투 1차 검출(W4) 결과를 집필 직후 표시.
+#   * 씬 단위 다시 쓰기·직접 수정 저장·잠금·되돌리기(W6).
+#   * scene_list_writer.py 신규 파일 필요 (prompt.py·main.py와 같은 폴더).
+#   * make_docx_bytes(act_map=...) 인자 추가 — 기본값 None이면 기존 동작.
+# ─────────────────────────────────────────────────────────────
 import os
 import json  # ★ v3.1 — Creator JSON 로드용
 from datetime import datetime
@@ -26,10 +36,20 @@ from prompt import (
     renumber_scenes_for_writer,
     ENGINE_VERSION,              # ★ v3.1
     ENGINE_BUILD_DATE,           # ★ v3.1
+    # ★ v4.0.0 신규 — 씬리스트 모드 (시퀀스 집필 / 씬 단위 재집필)
+    build_write_sequence_prompt,
+    build_rewrite_scene_prompt,
 )
+
+# ★ v4.0.0 — 씬리스트 로더·검증 모듈 (없으면 씬리스트 모드 비활성)
+try:
+    import scene_list_writer as SLW
+except Exception:
+    SLW = None
 
 ANTHROPIC_MODEL_WRITE = "claude-opus-4-6"      # 집필 (비트 쓰기, 다시 쓰기) — 최고 품질
 ANTHROPIC_MODEL_PLAN  = "claude-sonnet-4-6"    # 구조 작업 (씬 플랜, 요소 추출) — 비용 효율
+SEQ_WRITE_TOKENS = 48000   # ★ v4.0.0 — 시퀀스 1회 집필 최대 출력 (최대 18씬 분량 여유)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -225,103 +245,6 @@ def _split_action_paragraph(text: str) -> list:
 import re as _re_prop
 
 
-# ═══════════════════════════════════════════════════════════
-# ★ v3.15.4 신규 — AI 자가 보고서 제거
-# 문제: 기존 제거 규칙이 정확한 태그명(<GENRE_BOOSTER_CHECK>)만 잡았다.
-#   prompt.py는 <GENRE_BOOSTER_CHECK_HORROR>처럼 장르명을 붙여 지시하므로
-#   한 번도 제거되지 않았다. 위반 보완 재집필은 여기에 더해
-#   [씬 플랜 vs 집필 대조] · [보완 재집필 공통 제약 확인] · <!-- --> ·
-#   <SCENE_SEQUENCE_CHECK> 같은 변경 보고서를 원고 안에 남겼다.
-#   보고서 속 "S#69 EXT. … ✅" 줄은 검증기가 실제 씬으로 세어
-#   가짜 씬 번호 중복(V5)·가짜 시간 역행(V2)까지 만들었다.
-# 원칙: 시나리오 본문에 절대 나올 수 없는 형태만 지운다.
-#   (대문자 태그 블록, HTML 주석, 점검 헤더로 시작하는 보고 구간, ✅·□ 줄)
-# [소품 상태] 메모는 다음 비트 집필이 참조하므로 여기서는 남긴다.
-# ═══════════════════════════════════════════════════════════
-
-_RPT_TAG_BLOCK = _re_prop.compile(r'<([A-Z][A-Z0-9_]{2,})>[\s\S]*?</\1>')
-# <WRITER_NOTES_BEGIN> … <WRITER_NOTES_END> 같은 BEGIN/END 쌍 — 구간 전체 제거
-# (표지 줄만 지우면 DOCX 빌더의 WRITER_NOTES 스킵이 작동하지 않아 노트가 유출된다)
-_RPT_BEGIN_END = _re_prop.compile(r'<([A-Z][A-Z0-9_]*?)_BEGIN>[\s\S]*?(?:<\1_END>|\Z)')
-# 표지 없이 쓰인 작가 노트·변경 보고의 첫 줄
-_RPT_NOTE_START = _re_prop.compile(
-    r'^\s*(?:#{1,6}\s|INTERNAL\b'
-    r'|-\s*(?:비트 요약|비트 구조 유형|재집필 변경 사항|수정 지시 해소|위반 해소|'
-    r'시간대 위반 해소|액션 아이디어 전진|서사동력)[^:：\n]*[:：])'
-)
-_RPT_TAG_LINE = _re_prop.compile(r'^\s*</?[A-Z][A-Z0-9_]{2,}>\s*$', _re_prop.M)
-_RPT_HTML_COMMENT = _re_prop.compile(r'<!--[\s\S]*?(?:-->|\Z)')
-_RPT_HEADER = _re_prop.compile(
-    r'^\s*\[[^\]\n]*(?:CHECK|체크|점검|검증|확인|해소|대조|요약|연결|제약|'
-    r'시퀀스|에스컬레이션|자가|A\d{2})[^\]\n]*\]\s*$'
-)
-_RPT_SCENE_HEADING = _re_prop.compile(
-    r'^\s*S#\s*\d+\s*\.?\s*(?:INT|EXT|I/E|I\.?/E)', _re_prop.I
-)
-_RPT_JUNK_LINE = _re_prop.compile(r'^\s*[□☑■]|✅')
-
-
-def _strip_report_blocks(text: str) -> str:
-    """AI 자가 점검·변경 보고서를 원고에서 제거한다. 원고 문장은 건드리지 않는다."""
-    if not text:
-        return text
-    text = _RPT_HTML_COMMENT.sub('\n', text)
-    text = _RPT_BEGIN_END.sub('\n', text)
-    text = _RPT_TAG_BLOCK.sub('\n', text)
-    text = _RPT_TAG_LINE.sub('', text)
-
-    out, in_report = [], False
-    for line in text.split('\n'):
-        is_head = (bool(_RPT_HEADER.match(line)) or bool(_RPT_NOTE_START.match(line))) \
-            and '소품' not in line
-        if is_head:
-            try:
-                if _is_insert_label(line):   # [카톡 확인] 같은 INSERT 라벨은 보존
-                    is_head = False
-            except NameError:
-                pass
-        if is_head:
-            in_report = True
-            continue
-        if in_report:
-            # 보고 구간은 다음 '진짜' 씬 헤딩에서 끝난다
-            if _RPT_SCENE_HEADING.match(line) and '✅' not in line:
-                in_report = False
-            else:
-                continue
-        if _RPT_JUNK_LINE.search(line) or line.strip() == '---':
-            continue
-        out.append(line)
-    text = '\n'.join(out)
-    text = _re_prop.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
-
-
-# ═══════════════════════════════════════════════════════════
-# ★ v3.15.5 신규 — 곧은 따옴표 → 둥근 따옴표 (TXT·DOCX 출력 단계)
-# 여는 자리: 줄 처음·공백·탭·여는 괄호·줄표 뒤 → ‘ “
-# 그 외(글자 뒤)는 닫는 자리 → ’ ”
-# ═══════════════════════════════════════════════════════════
-_QUOTE_OPEN_AFTER = set(" \t\n([{<〈《「『—–-·/…")
-
-
-def _to_curly_quotes(text: str) -> str:
-    if not text or ("'" not in text and '"' not in text):
-        return text
-    out = []
-    for i, ch in enumerate(text):
-        if ch in ("'", '"'):
-            prev = text[i - 1] if i > 0 else ""
-            opening = (prev == "") or (prev in _QUOTE_OPEN_AFTER)
-            if ch == "'":
-                out.append("\u2018" if opening else "\u2019")
-            else:
-                out.append("\u201c" if opening else "\u201d")
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
 def _strip_prop_state_memos(text: str) -> str:
     """
     텍스트에서 [소품 상태 / ...] 메모 블록을 제거.
@@ -342,9 +265,6 @@ def _strip_prop_state_memos(text: str) -> str:
     """
     if not text:
         return text
-
-    # ★ v3.15.4 — 자가 보고서 먼저 제거 (장르명 붙은 태그·HTML 주석·보고 구간)
-    text = _strip_report_blocks(text)
     
     # 패턴 1: 코드블록 안에 들어있는 케이스 (```로 감싼 형태)
     # ```\n[소품 상태 ...]\n- ...\n```
@@ -588,7 +508,7 @@ with st.sidebar:
         </div>
         <div style="font-size:.7rem;color:#666;margin-top:8px;">
             Build: {ENGINE_BUILD_DATE}<br>
-            Creator Engine v2.6.0+ 호환
+            Creator Engine v2.8.2 씬리스트 호환
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -653,6 +573,24 @@ with st.sidebar:
         <div style="padding:10px;background:#F5F5F5;border-radius:8px;border-left:3px solid #BDBDBD;margin-top:12px;font-family:'Pretendard',sans-serif;">
             <div style="font-size:.7rem;color:#555;font-weight:700;letter-spacing:.05em;margin-bottom:4px;">⚪ 사전 방지 (v3.7.1)</div>
             <div style="font-size:.7rem;color:#666;line-height:1.4;">Creator v2.6.0 데이터 없음<br>Writer 자가 점검(A28/A29)만 작동</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ★ v4.0.0 — 집필 모드 표시 (씬리스트 / 15비트)
+    _slh = st.session_state.get("scene_list_handoff") or {}
+    if SLW is not None and _slh.get("available") and st.session_state.get("use_scene_list_mode", True):
+        st.markdown(f"""
+        <div style="padding:10px;background:#E8EAF6;border-radius:8px;border-left:3px solid #191970;margin-top:12px;font-family:'Pretendard',sans-serif;">
+            <div style="font-size:.7rem;color:#191970;font-weight:700;letter-spacing:.05em;margin-bottom:4px;">📋 집필 모드 (v4.0.0)</div>
+            <div style="font-size:.78rem;font-weight:700;color:#1A1A2E;">씬리스트 모드 — 시퀀스 집필</div>
+            <div style="font-size:.66rem;color:#444;margin-top:6px;">{SLW.handoff_summary(_slh)}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div style="padding:10px;background:#F5F5F5;border-radius:8px;border-left:3px solid #BDBDBD;margin-top:12px;font-family:'Pretendard',sans-serif;">
+            <div style="font-size:.7rem;color:#555;font-weight:700;letter-spacing:.05em;margin-bottom:4px;">📋 집필 모드 (v4.0.0)</div>
+            <div style="font-size:.74rem;color:#666;">씬리스트 없음 — 15비트 집필</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -836,6 +774,14 @@ for k, v in {
     "beat_v26_data": {},  # ★ v3.7.1 — 비트 번호별 Creator v2.6.0 4필드
     "confined_space": False,   # ★ v3.9.0 — 한정 공간 작품 (권역 정책 오버라이드)
     "venue_hints_raw": "",     # ★ v3.9.0 — 작가 지정 권역 목록 (쉼표 구분 원문)
+    # ★ v4.0.0 — 씬리스트 모드
+    "scene_list_handoff": {},  # Creator writer_handoff_v28 로드 결과
+    "creator_json_loaded": False,
+    "use_scene_list_mode": True,
+    "seq_done": {},            # 시퀀스 번호 → 원고
+    "seq_history": {},         # 시퀀스 번호 → 이전 버전들
+    "scene_history": {},       # 씬 번호 → 이전 버전들
+    "locked_scenes": [],       # 작가 확정 씬 번호
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -868,33 +814,6 @@ def stream_ai(prompt: str, tokens: int = 16000, model: str = ""):
                 yield text
     except Exception as e:
         yield f"\n\n❌ 오류: {e}"
-
-
-# ★ v3.15.3 신규 — AI 응답 실패 판정
-# stream_ai()는 오류가 나도 예외를 던지지 않고 "❌ 오류: …" 문장을 돌려준다.
-# 이 문장을 원고로 저장하면 비트 원고가 오류 한 줄로 덮어써진다
-# (실측: 크레딧 부족 400 오류로 「순환」 Beat 15 원고 소실).
-def _ai_failed(text) -> bool:
-    t = (text or "").strip()
-    if not t:
-        return True
-    return t.startswith("❌") or "❌ 오류:" in t
-
-
-def _ai_fail_hint(text) -> str:
-    t = (text or "")
-    if "credit balance" in t:
-        return ("Anthropic API 크레딧이 부족합니다. console.anthropic.com의 "
-                "Plans & Billing에서 충전한 뒤 다시 시도하세요.")
-    if "ANTHROPIC_API_KEY" in t:
-        return "API 키가 설정되지 않았습니다. Streamlit Secrets를 확인하세요."
-    return "AI 응답이 실패했습니다. 잠시 뒤 다시 시도하세요."
-
-
-def _corrupted_beats() -> list:
-    """오류 문장으로 덮어써진 비트 번호 목록 (이전 버전에서 생긴 손상 탐지용)."""
-    _d = st.session_state.get("beats_done", {}) or {}
-    return sorted(int(k) for k, v in _d.items() if _ai_failed(v))
 
 def full_plan() -> str:
     """3막 플랜 합침."""
@@ -931,6 +850,9 @@ _BACKUP_KEYS = [
     "genre_essence",
     # ★ v3.6.1 — 비트별 재집필 히스토리 (최대 3개 버전 보존)
     "beats_history",
+    # ★ v4.0.0 — 씬리스트 모드
+    "scene_list_handoff", "creator_json_loaded", "use_scene_list_mode",
+    "seq_done", "seq_history", "scene_history", "locked_scenes",
 ]
 
 
@@ -989,7 +911,12 @@ def export_session_backup() -> bytes:
             "saved_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
             "title": st.session_state.get("title", ""),
             "genre": st.session_state.get("genre", ""),
-            "beats_progress": f"{len(st.session_state.get('beats_done', {}))}/15",
+            "beats_progress": (
+                f"{len(st.session_state.get('seq_done', {}))}/"
+                f"{len((st.session_state.get('scene_list_handoff') or {}).get('sequences', []))} 시퀀스"
+                if st.session_state.get("seq_done") else
+                f"{len(st.session_state.get('beats_done', {}))}/15"
+            ),
         },
         "session": {k: st.session_state.get(k) for k in _BACKUP_KEYS},
     }
@@ -1015,6 +942,11 @@ def import_session_backup(raw_bytes: bytes) -> dict:
             # beats_done 키를 다시 int로 (JSON에서 str로 저장됨)
             if k == "beats_done" and isinstance(v, dict):
                 v = {int(kk): vv for kk, vv in v.items()}
+            # ★ v4.0.0 — 시퀀스/씬 번호 키도 int로 복원
+            if k in ("seq_done", "seq_history", "scene_history") and isinstance(v, dict):
+                v = {int(kk): vv for kk, vv in v.items()}
+            if k == "scene_list_handoff" and isinstance(v, dict) and isinstance(v.get("storyline"), dict):
+                v["storyline"] = {int(kk): vv for kk, vv in v["storyline"].items()}
             st.session_state[k] = v
     
     return meta
@@ -1098,8 +1030,10 @@ def _normalize_screenplay_blank_lines(text: str) -> str:
 def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
                     fact_based: bool = False,
                     historical: bool = False,
-                    historical_type: str = "") -> bytes:
-    """시나리오 DOCX — 한국 표준 시나리오 서식."""
+                    historical_type: str = "",
+                    act_map: dict = None) -> bytes:
+    """시나리오 DOCX — 한국 표준 시나리오 서식.
+    ★ v4.0.0 — act_map({키: 막 이름})을 주면 BEATS_15 대신 그것으로 막 구분(씬리스트 모드)."""
     import re
     from docx import Document as DocxDocument
     from docx.shared import Pt, RGBColor
@@ -1420,7 +1354,9 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
     doc.add_paragraph("")
     add_text("기획/제작 | 블루진픽처스", size=Pt(10), align=WD_ALIGN_PARAGRAPH.CENTER,
              color=RGBColor(0x8E, 0x8E, 0x99))
-    add_text(f"Writer Engine {ENGINE_VERSION}  ·  {len(beats_done)}/15 비트",
+    _progress = (f"{len(beats_done)}/{len(set(act_map.get('__total__', [])) or beats_done)} 시퀀스"
+                 if act_map is not None else f"{len(beats_done)}/15 비트")
+    add_text(f"Writer Engine {ENGINE_VERSION}  ·  {_progress}",
              size=Pt(9), align=WD_ALIGN_PARAGRAPH.CENTER,
              color=RGBColor(0x8E, 0x8E, 0x99))
     doc.add_page_break()
@@ -1592,7 +1528,8 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
 
     current_act = ""
     for b_no in sorted(beats_done.keys()):
-        b_info = BEATS_15[b_no - 1]
+        b_info = ({"act": act_map.get(b_no, "")} if act_map is not None
+                  else BEATS_15[b_no - 1])
 
         # ACT 전환
         if b_info["act"] != current_act:
@@ -1606,7 +1543,6 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
         # AI가 비트 끝에 작성한 [소품 상태 / S#N 종료 시점] INTERNAL 메모는
         # 다음 비트 집필용 참조 자료로만 쓰이고, 최종 시나리오 본문에는 노출 안 됨.
         text = _strip_prop_state_memos(text)
-        text = _to_curly_quotes(text)   # ★ v3.15.5
 
         # ═══════════════════════════════════════════════════════════
         # 대사 형식 붕괴 자동 복구 (v3.4 신규)
@@ -1919,6 +1855,17 @@ with st.expander("⚡ Creator Engine JSON 업로드 (자동 채우기)", expande
             current_genre = st.session_state.get("genre", "")
             essence = extract_genre_essence(creator_data, genre_fallback=current_genre)
             st.session_state["genre_essence"] = essence
+
+            # ★ v4.0.0 — 씬리스트(writer_handoff_v28) 감지. 새 JSON이면 시퀀스 원고 초기화.
+            st.session_state["creator_json_loaded"] = True
+            if SLW is not None:
+                _slh_new = SLW.load_scene_list_handoff(creator_data)
+            else:
+                _slh_new = {"available": False, "reason": "scene_list_writer.py 파일 없음"}
+            st.session_state["scene_list_handoff"] = _slh_new
+            for _k in ("seq_done", "seq_history", "scene_history"):
+                st.session_state[_k] = {}
+            st.session_state["locked_scenes"] = []
             
             # 엔진 버전 표시
             meta = creator_data.get("_meta", {})
@@ -1976,6 +1923,8 @@ with st.expander("⚡ Creator Engine JSON 업로드 (자동 채우기)", expande
                 f"**엔딩 판정**: {et_msg}\n\n"
                 f"**장르 본질 (v3.6.0)**: {essence_msg}\n\n"
                 f"**사전 방지 (v3.7.1)**: {v26_msg}\n\n"
+                f"**씬리스트 (v4.0.0)**: "
+                f"{SLW.handoff_summary(_slh_new) if (SLW and _slh_new.get('available')) else '씬리스트 없음 — ' + _slh_new.get('reason', '')}\n\n"
                 f"**로드된 필드**: 11칸 + v3.1 신규 3칸 + v3.6.0 본질 + v3.7.1 사전 방지 4종"
             )
             st.rerun()
@@ -2304,14 +2253,40 @@ else:
 has_material = any(st.session_state[f].strip() for f in FIELDS)
 
 # ═══════════════════════════════════════════════════════════
-# SCENE PLAN — 3막 분할 (100씬 / 100분)
+# ★ v4.0.0 — 집필 모드 판정 (W1)
+# 씬리스트가 있으면 시퀀스 집필, 없으면 기존 15비트 집필.
 # ═══════════════════════════════════════════════════════════
-st.markdown(
-    '<div class="section-header">🗺️ 씬 플랜 <span class="en">SCENE PLAN · 100 SCENES / 3-ACT SPLIT</span></div>',
-    unsafe_allow_html=True,
-)
+_SLH_NOW = st.session_state.get("scene_list_handoff") or {}
+_SL_AVAILABLE = bool(SLW is not None and _SLH_NOW.get("available"))
+if _SL_AVAILABLE:
+    st.markdown(
+        f'<div class="callout"><div class="cl">SCENE LIST</div>'
+        f'씬리스트 수신 — {SLW.handoff_summary(_SLH_NOW)}</div>',
+        unsafe_allow_html=True,
+    )
+    st.checkbox(
+        "씬리스트 모드로 집필 (끄면 기존 15비트 방식)",
+        key="use_scene_list_mode",
+        help="Creator가 잠근 씬리스트를 시퀀스 단위로 집필합니다.",
+    )
+elif st.session_state.get("creator_json_loaded"):
+    st.warning(
+        "씬리스트 없음 — 기존 15비트 방식으로 집필합니다. "
+        f"({_SLH_NOW.get('reason', '') or 'Creator JSON에 씬리스트 필드 없음'})"
+    )
+_SL_MODE = _SL_AVAILABLE and bool(st.session_state.get("use_scene_list_mode", True))
 
-if has_material:
+# ═══════════════════════════════════════════════════════════
+# SCENE PLAN — 3막 분할 (100씬 / 100분)
+# ★ v4.0.0 — 씬리스트 모드에서는 표시하지 않는다 (씬리스트가 곧 플랜)
+# ═══════════════════════════════════════════════════════════
+if not _SL_MODE:
+    st.markdown(
+        '<div class="section-header">🗺️ 씬 플랜 <span class="en">SCENE PLAN · 100 SCENES / 3-ACT SPLIT</span></div>',
+        unsafe_allow_html=True,
+    )
+
+if has_material and not _SL_MODE:
     st.markdown(
         '<div class="small-meta">'
         '100씬/100분 기준. 1막 → 2막 → 3막 순서로 생성합니다.'
@@ -2452,7 +2427,7 @@ if has_material:
         if elements_done:
             with st.expander("핵심 요소 보기 ✅", expanded=False):
                 st.text(st.session_state["story_elements"])
-else:
+elif not _SL_MODE:
     st.markdown(
         '<div class="callout"><div class="cl">WAITING</div>'
         '위에 기획 자료를 붙여넣으면 시작할 수 있습니다.</div>',
@@ -2462,7 +2437,7 @@ else:
 # ═══════════════════════════════════════════════════════════
 # STEP 2 — 비트별 집필
 # ═══════════════════════════════════════════════════════════
-if plan_ready():
+if plan_ready() and not _SL_MODE:
     st.markdown(
         '<div class="section-header">✍️ STEP 2 · 비트별 집필 <span class="en">WRITE BY BEAT</span></div>',
         unsafe_allow_html=True,
@@ -2599,10 +2574,6 @@ if plan_ready():
                     unsafe_allow_html=True,
                 )
                 result = st.write_stream(stream_ai(prompt, tokens=16000))
-                # ★ v3.15.3 — 실패 응답은 원고에 저장하지 않는다
-                if _ai_failed(result):
-                    st.error(f"❌ Beat {b_no} 재집필 실패 — 원고는 그대로입니다. {_ai_fail_hint(result)}")
-                    st.stop()
                 # INTERNAL 메모(소품 상태/GENRE_*_CHECK) 자동 제거
                 result = _strip_prop_state_memos(result)
                 st.session_state["beats_done"][b_no] = result
@@ -2682,12 +2653,6 @@ if plan_ready():
         )
         st.markdown(f'<div class="beat-tag">Beat {cur} 집필 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=16000))
-        # ★ v3.15.3 — 실패 응답은 저장하지 않고 다음 비트로 넘기지 않는다
-        if _ai_failed(result):
-            st.error(f"❌ Beat {cur} 집필 실패 — 저장하지 않았습니다. {_ai_fail_hint(result)}")
-            st.stop()
-        # ★ v3.15.4 — 자가 보고서는 저장 전에 제거 (소품 상태 메모는 다음 비트용으로 유지)
-        result = _strip_report_blocks(result)
         st.session_state["beats_done"][cur] = result
         st.session_state["current_beat"] = cur + 1
         st.rerun()
@@ -2747,10 +2712,6 @@ if plan_ready():
         )
         st.markdown(f'<div class="beat-tag">Beat {last_beat} 다시 쓰는 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=16000))
-        # ★ v3.15.3 — 실패 응답은 원고에 저장하지 않는다
-        if _ai_failed(result):
-            st.error(f"❌ Beat {last_beat} 다시 쓰기 실패 — 원고는 그대로입니다. {_ai_fail_hint(result)}")
-            st.stop()
         result = _strip_prop_state_memos(result)
         st.session_state["beats_done"][last_beat] = result
         st.success(f"✅ Beat {last_beat} 재집필 완료. 마음에 들지 않으면 비트 영역에서 ↩️ 되돌리기 가능.")
@@ -2769,6 +2730,9 @@ def _run_violation_fix(b_no: int, instruction: str,
     if b_no not in _done:
         st.warning(f"Beat {b_no}의 원고가 없습니다.")
         return
+
+    # 되돌리기용 자동 백업 (기존 ↩️ 버튼으로 복원 가능)
+    push_beat_history(b_no, _done[b_no])
 
     _prev = _done.get(b_no - 1, "") if ref_adjacent else ""
     _next = _done.get(b_no + 1, "") if ref_adjacent else ""
@@ -2815,141 +2779,15 @@ def _run_violation_fix(b_no: int, instruction: str,
         unsafe_allow_html=True,
     )
     _result = st.write_stream(stream_ai(_prompt, tokens=16000))
-    # ★ v3.15.3 — 실패 응답이면 원고를 건드리지 않고, 완료로 기록하지 않는다
-    if _ai_failed(_result):
-        st.session_state["ss_fix_flash_error"] = (
-            f"❌ Beat {b_no} 보완 실패 — 원고는 그대로입니다. {_ai_fail_hint(_result)}"
-        )
-        st.rerun()
-    # 되돌리기용 자동 백업 (기존 ↩️ 버튼으로 복원 가능) — 성공했을 때만
-    push_beat_history(b_no, _done[b_no])
     _result = _strip_prop_state_memos(_result)
     st.session_state["beats_done"][b_no] = _result
     st.session_state["ss_report_stale"] = True
-    # ★ v3.15.2 — 보완 완료를 기록한다. 기록이 없으면 새로고침 후
-    #   같은 버튼이 그대로 다시 그려져 '초기화된 것처럼' 보인다.
-    from datetime import timezone as _tz_fx, timedelta as _td_fx
-    _fixed = dict(st.session_state.get("ss_fixed_beats") or {})
-    _fixed[int(b_no)] = datetime.now(_tz_fx(_td_fx(hours=9))).strftime("%H:%M")
-    st.session_state["ss_fixed_beats"] = _fixed
-    # 완료 메시지는 새로고침 다음 화면에서 한 번 보여준다(플래시 메시지).
-    st.session_state["ss_fix_flash"] = (
+    st.success(
         f"✅ Beat {b_no} 보완 완료. 결과가 마음에 들지 않으면 "
-        f"STEP 2의 Beat {b_no} 영역에서 ↩️ 되돌리기로 복원하세요."
+        f"STEP 2의 Beat {b_no} 영역에서 ↩️ 되돌리기로 복원하세요. "
+        f"다음 비트로 넘어가기 전에 재검증을 권합니다."
     )
     st.rerun()
-
-
-# ═══════════════════════════════════════════════════════════
-# ★ v3.15.1 신규 — 검증 상태 판정 헬퍼
-# 문제: 검증이 끝났는지, 끝난 뒤 원고가 바뀌었는지 화면에서 알 수 없었다.
-#   기존 stale 플래그는 「위반 보완 재집필」에서만 켜져서, 일반 다시 쓰기·
-#   되돌리기·비트 추가 집필 후에는 낡은 검증 결과가 '최신'처럼 보였다.
-# 해결: 검증 시점의 원고 지문(해시)을 저장하고 현재 원고와 비교한다.
-#   어떤 경로로 원고가 바뀌든 자동으로 '재검증 필요'가 된다.
-# ═══════════════════════════════════════════════════════════
-import hashlib as _hashlib_ss
-from datetime import timezone as _tz_ss, timedelta as _td_ss
-
-
-def _ss_fingerprint() -> str:
-    return _hashlib_ss.md5(
-        _full_text_so_far().encode("utf-8", errors="ignore")
-    ).hexdigest()
-
-
-def _run_ss_verify() -> None:
-    """검증 실행 공용 함수 — 상단·하단 버튼, 씬 번호 재정렬이 함께 쓴다."""
-    # ★ v3.15.3 — 오류 문장으로 덮어써진 비트가 있으면 검증하지 않는다.
-    #   씬이 사라진 원고를 검사하면 위반이 '가짜로' 줄어든다.
-    if _corrupted_beats():
-        st.session_state["ss_verify_blocked"] = True
-        return
-    st.session_state["ss_verify_blocked"] = False
-
-    # ★ v3.15.4 — 이미 원고에 섞인 자가 보고서를 검증 전에 제거한다.
-    #   보고서 속 "S#69 EXT. … ✅" 줄을 씬으로 세면 가짜 위반이 생긴다.
-    _cleaned = {}
-    for _k, _v in (st.session_state.get("beats_done", {}) or {}).items():
-        _c = _strip_report_blocks(_v)
-        if _c != _v:
-            push_beat_history(_k, _v)   # ↩️ 되돌리기 가능
-        _cleaned[_k] = _c
-    st.session_state["beats_done"] = _cleaned
-
-    # ★ v3.15.3 — 씬 번호 중복(V5)은 검증 전에 자동 정리한다 (AI 호출 없음).
-    #   재집필된 비트는 앞뒤와 번호가 겹쳐 나오므로, 정리하지 않으면
-    #   보완할 때마다 V5가 새로 생겨 '보완 → 재검증'이 끝나지 않는다.
-    _before = dict(st.session_state.get("beats_done", {}) or {})
-    _new_beats, _log = renumber_scenes_for_writer(_before)
-    if _log:
-        for _k, _v in _new_beats.items():
-            if _before.get(_k) != _v and _before.get(_k):
-                push_beat_history(_k, _before[_k])   # ↩️ 되돌리기 가능
-        st.session_state["beats_done"] = _new_beats
-        st.session_state["ss_renumber_log"] = _log
-    st.session_state["ss_auto_renumber_n"] = len(_log or [])
-
-    _full = _full_text_so_far()
-    if not _full.strip():
-        st.session_state["ss_report"] = None
-        return
-    st.session_state["ss_report"] = verify_scene_sequence_for_writer(
-        _full,
-        genre=st.session_state.get("genre", ""),
-        confined_space=st.session_state.get("confined_space", False),
-        venue_hints=_get_venue_hints(),
-    )
-    st.session_state["ss_report_stale"] = False
-    # ★ v3.15.2 — 새 검증 결과가 나오면 보완 완료 기록은 그 결과로 대체된다
-    st.session_state["ss_fixed_beats"] = {}
-    st.session_state["ss_plan_beats"] = dict(st.session_state.get("beats_done", {}) or {})
-    st.session_state["ss_report_fp"] = _ss_fingerprint()
-    st.session_state["ss_report_beats"] = len(st.session_state.get("beats_done", {}) or {})
-    st.session_state["ss_report_time"] = datetime.now(
-        _tz_ss(_td_ss(hours=9))
-    ).strftime("%m/%d %H:%M")
-    # ★ v3.15.3 — 위반 추이 기록 (수렴 정체 판정용)
-    _rep_new = st.session_state.get("ss_report") or {}
-    if _rep_new.get("available"):
-        _vt_new = sum(len(x) for x in _rep_new.get("violations", {}).values())
-        _trend = list(st.session_state.get("ss_verify_trend") or [])
-        _trend.append(_vt_new)
-        st.session_state["ss_verify_trend"] = _trend[-8:]
-
-
-def _ss_stalled() -> bool:
-    """보완을 거듭해도 위반이 줄지 않는지 — 최근 3회 중 마지막이 2회 전보다 작지 않으면 정체."""
-    _t = st.session_state.get("ss_verify_trend") or []
-    return len(_t) >= 3 and _t[-1] > 0 and _t[-1] >= _t[-3]
-
-
-def _ss_trend_text() -> str:
-    _t = st.session_state.get("ss_verify_trend") or []
-    return " → ".join(str(x) for x in _t[-5:]) if len(_t) >= 2 else ""
-
-
-def _ss_status() -> dict:
-    """현재 검증 상태 — state: none / unavailable / stale / clean / violations"""
-    _rep = st.session_state.get("ss_report")
-    if not _rep:
-        return {"state": "none"}
-    if not _rep.get("available"):
-        return {"state": "unavailable"}
-    _vt = sum(len(x) for x in _rep.get("violations", {}).values())
-    _info = {
-        "violations": _vt,
-        "scenes": _rep.get("total", 0),
-        "time": st.session_state.get("ss_report_time", ""),
-        "beats": st.session_state.get("ss_report_beats", 0),
-    }
-    _fp = st.session_state.get("ss_report_fp")
-    _changed = (_fp is not None and _fp != _ss_fingerprint())
-    if _changed or st.session_state.get("ss_report_stale"):
-        _info["state"] = "stale"
-    else:
-        _info["state"] = "clean" if _vt == 0 else "violations"
-    return _info
 
 
 # ═══════════════════════════════════════════════════════════
@@ -2957,7 +2795,7 @@ def _ss_status() -> dict:
 # 파이썬이 원고를 직접 파싱해 권역·시간대 위반을 검출한다.
 # AI에게 세라고 시키지 않는다 — 세는 주체와 어기는 주체가 같으면 안 되므로.
 # ═══════════════════════════════════════════════════════════
-if st.session_state.get("beats_done"):
+if st.session_state.get("beats_done") and not _SL_MODE:
     st.markdown(
         '<div class="section-header">🗺️ 씬 시퀀스 검증 '
         '<span class="en">SCENE SEQUENCE · VENUE &amp; TIME CONTINUITY</span></div>',
@@ -2975,28 +2813,19 @@ if st.session_state.get("beats_done"):
         )
 
     if _run_verify:
-        if not _full_text_so_far().strip():
+        _full = _full_text_so_far()
+        if not _full.strip():
             st.info("집필된 비트가 없습니다.")
-        with st.spinner("원고 전체를 검사하는 중입니다…"):
-            _run_ss_verify()
-
-    # ★ v3.15.3 — 오류 문장으로 덮어써진 비트 경고
-    _bad = _corrupted_beats()
-    if _bad:
-        st.error(
-            "❌ 다음 비트의 원고가 AI 오류 문장으로 덮어써져 있습니다: "
-            + ", ".join(f"Beat {b}" for b in _bad)
-            + ". STEP 2의 해당 비트 영역에서 ↩️ 되돌리기로 원고를 복원하세요. "
-            "복원 전에는 검증을 실행하지 않습니다(씬이 빠진 원고는 위반이 가짜로 줄어듭니다)."
-        )
-
-    # ★ v3.15.1 — 검증 상태를 결과 맨 위에 한 줄로 고정 표시
-    _sst = _ss_status()
-    if _sst["state"] == "stale":
-        st.warning(
-            f"🔄 원고가 마지막 검증({_sst['time']}) 이후 수정되었습니다. "
-            "아래 결과는 이전 원고 기준입니다. [검증 실행]을 다시 누르세요."
-        )
+            st.session_state["ss_report"] = None
+        else:
+            st.session_state["ss_report"] = verify_scene_sequence_for_writer(
+                _full,
+                genre=st.session_state.get("genre", ""),
+                confined_space=st.session_state.get("confined_space", False),
+                venue_hints=_get_venue_hints(),
+            )
+            # 검증 시점 기준 — 이후 원고를 고치면 stale로 표시된다
+            st.session_state["ss_report_stale"] = False
 
     # ★ v3.10.0 — 검증 결과를 세션에 보관해 버튼 조작 후에도 유지한다
     _rep = st.session_state.get("ss_report")
@@ -3008,11 +2837,10 @@ if st.session_state.get("beats_done"):
             )
         else:
             _v_total = sum(len(x) for x in _rep.get("violations", {}).values())
-            _stamp = f" · 검증 시각 {_sst.get('time')}" if _sst.get("time") else ""
             if _v_total == 0:
-                st.success(f"✅ 위반 없음 — {_rep.get('total', 0)}씬 검사 완료{_stamp}")
+                st.success(f"✅ 위반 없음 — {_rep.get('total', 0)}씬 검사 완료")
             else:
-                st.error(f"⚠️ 위반 {_v_total}건 검출 — {_rep.get('total', 0)}씬 검사{_stamp}")
+                st.error(f"⚠️ 위반 {_v_total}건 검출 — {_rep.get('total', 0)}씬 검사")
             st.markdown(format_scene_sequence_report(_rep))
 
             # ═══════════════════════════════════════════════
@@ -3020,17 +2848,9 @@ if st.session_state.get("beats_done"):
             # 진단만 주고 끝내면 작가는 무엇부터 손댈지 알 수 없다.
             # 위반을 형식·국소·구조로 나눠 번호 순서와 버튼을 함께 제시한다.
             # ═══════════════════════════════════════════════
-            # ★ v3.15.2 — 처방 목록은 '검증 시점의 원고'로 고정한다.
-            #   현재 원고로 매번 다시 계산하면, 비트를 보완할 때마다 씬 구성이
-            #   바뀌어 그 비트가 목록에서 사라지거나 순서가 흔들린다.
-            #   (재집필 자체는 _run_violation_fix가 현재 원고로 수행한다.)
-            _plan_beats = st.session_state.get("ss_plan_beats")
-            if not _plan_beats:
-                _plan_beats = dict(st.session_state.get("beats_done", {}) or {})
-                st.session_state["ss_plan_beats"] = _plan_beats
             _plan = build_fix_plan_for_writer(
                 _rep,
-                _plan_beats,
+                st.session_state.get("beats_done", {}),
                 venue_hints=_get_venue_hints(),
             )
 
@@ -3040,10 +2860,10 @@ if st.session_state.get("beats_done"):
                     '<span class="en">FIX PLAN · STEP BY STEP</span></div>',
                     unsafe_allow_html=True,
                 )
-                if _sst["state"] == "stale":
+                if st.session_state.get("ss_report_stale"):
                     st.warning(
                         "원고가 수정된 상태입니다. 아래 순서는 마지막 검증 시점 기준이므로 "
-                        "이 영역 맨 아래 [재검증 실행]을 눌러 갱신하세요."
+                        "위 [검증 실행]을 다시 눌러 갱신하세요."
                     )
 
                 # 2단계에 이미 잡힌 비트 — 3단계 중복 안내용
@@ -3052,37 +2872,6 @@ if st.session_state.get("beats_done"):
                     if _stp.get("kind") == "local":
                         for _bb in _stp.get("beats", []):
                             _local_beats.add(int(_bb["beat"]))
-
-                # ★ v3.15.2 — 보완 진행률. 재집필 대상 비트(국소 + 권역 이전) 전체 기준.
-                _fixed_map = st.session_state.get("ss_fixed_beats") or {}
-                _target_beats = set(_local_beats)
-                for _stp in _plan["steps"]:
-                    if _stp.get("kind") == "structural":
-                        for _tg in _stp.get("targets", []):
-                            _target_beats.add(int(_tg["beat"]))
-                _done_targets = sorted(b for b in _target_beats if b in _fixed_map)
-                _left_targets = sorted(b for b in _target_beats if b not in _fixed_map)
-
-                _flash = st.session_state.pop("ss_fix_flash", None)
-                if _flash:
-                    st.success(_flash)
-                _flash_err = st.session_state.pop("ss_fix_flash_error", None)
-                if _flash_err:
-                    st.error(_flash_err)
-                if _target_beats:
-                    if not _left_targets:
-                        st.success(
-                            f"✅ 보완 대상 {len(_target_beats)}개 비트 모두 재집필 완료. "
-                            "이 영역 맨 아래 [재검증 실행]을 눌러 결과를 확인하세요."
-                        )
-                    else:
-                        st.progress(
-                            len(_done_targets) / len(_target_beats),
-                            text=(
-                                f"보완 진행 {len(_done_targets)}/{len(_target_beats)} 비트 · "
-                                f"남은 비트: {', '.join('Beat ' + str(b) for b in _left_targets)}"
-                            ),
-                        )
 
                 for _stp in _plan["steps"]:
                     _o = _stp.get("order")
@@ -3115,7 +2904,15 @@ if st.session_state.get("beats_done"):
                                 st.session_state["ss_renumber_log"] = _log
                                 # 번호가 바뀌면 기존 리포트의 씬 참조가 전부 무효해진다.
                                 # 파이썬 검증은 비용이 없으므로 즉시 재검증해 갱신한다.
-                                _run_ss_verify()
+                                st.session_state["ss_report"] = \
+                                    verify_scene_sequence_for_writer(
+                                        _full_text_so_far(),
+                                        genre=st.session_state.get("genre", ""),
+                                        confined_space=st.session_state.get(
+                                            "confined_space", False),
+                                        venue_hints=_get_venue_hints(),
+                                    )
+                                st.session_state["ss_report_stale"] = False
                                 st.success(
                                     f"✅ 씬 번호 {len(_log)}건 재정렬 완료 — "
                                     f"검증 결과를 자동 갱신했습니다."
@@ -3145,27 +2942,17 @@ if st.session_state.get("beats_done"):
                                     st.caption(f"　· [{_it['code']}] {_it['msg']}")
                                 _inst = build_violation_fix_instruction_for_writer(
                                     _rep, _b,
-                                    _plan_beats,
+                                    st.session_state.get("beats_done", {}),
                                     plan=_plan,
                                     venue_hints=_get_venue_hints(),
                                 )
                                 _fc1, _fc2 = st.columns([2, 3])
                                 with _fc1:
-                                    if _b in _fixed_map:
-                                        # ★ v3.15.2 — 완료된 비트는 완료 표시 + 작은 재시도 버튼
-                                        st.success(f"✅ 보완 완료 · {_fixed_map[_b]}")
-                                        _fix_btn = st.button(
-                                            "다시 보완",
-                                            key=f"fix_local_btn_b{_b}",
-                                            use_container_width=True,
-                                        )
-                                    else:
-                                        _fix_btn = st.button(
-                                            f"🔧 Beat {_b} 위반 보완 재집필",
-                                            key=f"fix_local_btn_b{_b}",
-                                            use_container_width=True,
-                                            type="primary",
-                                        )
+                                    _fix_btn = st.button(
+                                        f"🔧 Beat {_b} 위반 보완 재집필",
+                                        key=f"fix_local_btn_b{_b}",
+                                        use_container_width=True,
+                                    )
                                 with _fc2:
                                     with st.expander("자동 생성된 지시문 보기", expanded=False):
                                         st.text(_inst or "(생성된 지시문 없음)")
@@ -3207,26 +2994,17 @@ if st.session_state.get("beats_done"):
                                 continue
                             _inst_v = build_violation_fix_instruction_for_writer(
                                 _rep, _b,
-                                _plan_beats,
+                                st.session_state.get("beats_done", {}),
                                 plan=_plan,
                                 venue_hints=_get_venue_hints(),
                             )
                             _vc1, _vc2 = st.columns([2, 3])
                             with _vc1:
-                                if _b in _fixed_map:
-                                    st.success(f"✅ 권역 이전 완료 · {_fixed_map[_b]}")
-                                    _vfix_btn = st.button(
-                                        "다시 이전",
-                                        key=f"fix_venue_btn_b{_b}",
-                                        use_container_width=True,
-                                    )
-                                else:
-                                    _vfix_btn = st.button(
-                                        f"🔧 Beat {_b} 권역 이전 재집필",
-                                        key=f"fix_venue_btn_b{_b}",
-                                        use_container_width=True,
-                                        type="primary",
-                                    )
+                                _vfix_btn = st.button(
+                                    f"🔧 Beat {_b} 권역 이전 재집필",
+                                    key=f"fix_venue_btn_b{_b}",
+                                    use_container_width=True,
+                                )
                             with _vc2:
                                 with st.expander("자동 생성된 지시문 보기", expanded=False):
                                     st.text(_inst_v or "(생성된 지시문 없음)")
@@ -3244,7 +3022,7 @@ if st.session_state.get("beats_done"):
                     elif _kind == "reverify":
                         st.markdown(f"**{_o}단계 · 재검증**")
                         st.caption(_stp.get("note", ""))
-                        st.caption("이 영역 맨 아래 [재검증 실행] 버튼을 누르세요.")
+                        st.caption("위쪽 [검증 실행] 버튼을 다시 누르세요.")
                         st.markdown("")
 
                     # ── 5단계 유형 · 저장
@@ -3253,106 +3031,19 @@ if st.session_state.get("beats_done"):
                         st.caption(_stp.get("note", ""))
                         st.caption("아래 다운로드 영역에서 TXT · DOCX · JSON을 저장할 수 있습니다.")
 
-    # ═══════════════════════════════════════════════
-    # ★ v3.15.1 신규 — 검증 마감 배너 「검증 상태」
-    # 처방 목록 끝에서 작가가 '지금 끝난 건지' 판단할 수 있게,
-    # 상태 하나와 다음 행동 하나를 맨 아래에 못박는다.
-    # 재검증 버튼도 여기 둔다 — 스크롤을 다시 올리지 않아도 된다.
-    # ═══════════════════════════════════════════════
-    st.markdown(
-        '<div class="section-header">🏁 검증 상태 '
-        '<span class="en">VERIFY STATUS · WHAT TO DO NOW</span></div>',
-        unsafe_allow_html=True,
-    )
-    _done_n = len(st.session_state.get("beats_done", {}) or {})
-    _st = _sst["state"]
-    if _st == "none":
-        st.info(
-            f"아직 검증하지 않았습니다 ({_done_n}/15 비트 집필). "
-            "아래 [검증 실행]을 누르면 결과와 다음 작업 순서가 이 위에 표시됩니다."
-        )
-    elif _st == "unavailable":
-        st.warning("scene_sequence.py가 없어 검증을 진행할 수 없습니다. 다운로드는 가능합니다.")
-    elif _st == "stale":
-        _fx_n = len(st.session_state.get("ss_fixed_beats") or {})
-        _fx_txt = f" 보완 완료 {_fx_n}개 비트가 반영된 상태입니다." if _fx_n else ""
-        st.warning(
-            f"🔄 재검증 필요 — 마지막 검증({_sst['time']}) 이후 원고가 수정되었습니다.{_fx_txt} "
-            "보완을 모두 마쳤으면 아래 [재검증 실행]을 누르세요."
-        )
-    elif _st == "clean":
-        if _done_n >= 15:
-            st.success(
-                f"✅ 검증 완료 — 위반 없음 ({_sst['scenes']}씬 · 15/15 비트 · {_sst['time']}). "
-                "아래 다운로드 영역에서 최종 원고를 저장하세요."
-            )
-        else:
-            st.success(
-                f"✅ 검증 완료 — 위반 없음 ({_sst['scenes']}씬 · {_done_n}/15 비트 · {_sst['time']}). "
-                "남은 비트를 집필한 뒤 다시 검증하세요. 중간 저장은 아래 다운로드 영역에서 가능합니다."
-            )
-    elif _ss_stalled():
-        # ★ v3.15.3 — 보완을 반복해도 줄지 않으면 루프를 끝내라고 명시한다
-        st.warning(
-            f"🛑 보완 종료 권장 — 위반 추이 {_ss_trend_text()}. "
-            f"재집필을 반복해도 위반 {_sst['violations']}건이 더 줄지 않습니다. "
-            "남은 위반은 AI 재집필로 풀리지 않는 유형입니다. 원고에서 직접 고치거나, "
-            "작가 판단으로 유지하고 아래 다운로드 영역에서 최종 저장하세요."
-        )
-    else:  # violations
-        _tr = _ss_trend_text()
-        st.info(
-            f"검증 완료 — 위반 {_sst['violations']}건이 남아 있습니다 "
-            f"({_sst['scenes']}씬 · {_done_n}/15 비트 · {_sst['time']}"
-            + (f" · 추이 {_tr}" if _tr else "") + "). "
-            "위 「다음 작업 순서」대로 보완한 뒤 [재검증 실행]을 누르세요. "
-            "남은 위반을 작가 판단으로 유지할 경우, 지금 상태 그대로 아래에서 최종 저장해도 됩니다."
-        )
-    if st.session_state.get("ss_auto_renumber_n"):
-        st.caption(
-            f"검증 전에 겹친 씬 번호 {st.session_state['ss_auto_renumber_n']}건을 "
-            "자동 정리했습니다(AI 호출 없음, ↩️ 되돌리기 가능)."
-        )
-    if _bad:
-        st.caption("원고 손상 비트를 복원해야 검증이 실행됩니다.")
-
-    _btn_label = "검증 실행" if _st == "none" else "🔄 재검증 실행"
-    _rv_c1, _rv_c2 = st.columns([1, 3])
-    with _rv_c1:
-        _run_verify_bottom = st.button(
-            _btn_label, key="ss_reverify_bottom_btn", use_container_width=True,
-            type="primary" if _st in ("stale", "none") else "secondary",
-        )
-    with _rv_c2:
-        st.caption("파이썬 검사이므로 API 비용이 들지 않습니다. 몇 번을 눌러도 됩니다.")
-    if _run_verify_bottom:
-        with st.spinner("원고 전체를 검사하는 중입니다…"):
-            _run_ss_verify()
-        st.rerun()
-
 # ═══════════════════════════════════════════════════════════
 # DOWNLOAD — TXT + DOCX (수시 저장)
 # ═══════════════════════════════════════════════════════════
-if st.session_state.get("beats_done"):
+if st.session_state.get("beats_done") and not _SL_MODE:
     st.markdown(
         '<div class="section-header">📄 다운로드 <span class="en">EXPORT · SAVE ANYTIME</span></div>',
         unsafe_allow_html=True,
     )
 
     done_count = len(st.session_state["beats_done"])
-    # ★ v3.15.1 — 다운로드 직전에 검증 상태를 한 번 더 보여준다
-    _dl_sst = _ss_status()
-    _dl_verify = {
-        "none": "검증 전",
-        "unavailable": "검증 불가",
-        "stale": "재검증 필요 (원고 수정됨)",
-        "clean": f"검증 완료 · 위반 없음 ({_dl_sst.get('time', '')})",
-        "violations": f"검증 완료 · 위반 {_dl_sst.get('violations', 0)}건 남음 ({_dl_sst.get('time', '')})",
-    }.get(_dl_sst["state"], "")
     st.markdown(
         f'<div class="callout"><div class="cl">DATA</div>'
-        f'{done_count}/15 비트 완료 · {_dl_verify}. '
-        f'새로고침하면 데이터가 사라집니다. 수시로 저장하세요.</div>',
+        f'{done_count}/15 비트 완료. 새로고침하면 데이터가 사라집니다. 수시로 저장하세요.</div>',
         unsafe_allow_html=True,
     )
 
@@ -3361,9 +3052,8 @@ if st.session_state.get("beats_done"):
     for b_no in sorted(st.session_state["beats_done"].keys()):
         b_info = BEATS_15[b_no - 1]
         # ★ v3.5.1 — 지문↔대사 빈 줄 후처리 적용
-        # ★ v3.15.4 — TXT도 DOCX와 같이 내부 메모·보고서 제거 (기존엔 DOCX만 제거)
         beat_text = _normalize_screenplay_blank_lines(
-            _to_curly_quotes(_strip_prop_state_memos(st.session_state['beats_done'][b_no]))
+            st.session_state['beats_done'][b_no]
         )
         parts.append(
             f"{'='*60}\n{b_info['act']} — Beat {b_no}. {b_info['name']}\n{'='*60}\n\n"
@@ -3419,6 +3109,386 @@ if st.session_state.get("beats_done"):
     )
 
 # ═══════════════════════════════════════════════════════════
+# ★ v4.0.0 신규 — STEP 2 · 시퀀스 집필 (씬리스트 모드)
+# Creator가 잠근 씬리스트를 시퀀스 단위로 집필한다 (W2).
+# 집필 직후 파이썬이 씬리스트 대조(W3)·말투 1차 검출(W4)을 돌린다.
+# 씬 단위 재작성·직접 수정·잠금·되돌리기(W6).
+# ═══════════════════════════════════════════════════════════
+_SL_HISTORY_MAX = 3
+
+
+def _sl_handoff() -> dict:
+    return st.session_state.get("scene_list_handoff") or {}
+
+
+def _sl_done() -> dict:
+    d = st.session_state.get("seq_done")
+    if not isinstance(d, dict):
+        d = {}
+        st.session_state["seq_done"] = d
+    return d
+
+
+def _sl_push(store_key: str, k: int, text: str) -> None:
+    store = st.session_state.setdefault(store_key, {})
+    store.setdefault(k, []).append(text)
+    if len(store[k]) > _SL_HISTORY_MAX:
+        store[k] = store[k][-_SL_HISTORY_MAX:]
+
+
+def _sl_pop(store_key: str, k: int) -> str:
+    store = st.session_state.get(store_key, {}) or {}
+    if store.get(k):
+        return store[k].pop()
+    return ""
+
+
+def _sl_clean(text: str) -> str:
+    """AI 출력 → 본문만 (소품 메모·자가검증 태그·WRITER_NOTES 제거)."""
+    return SLW.strip_notes(_strip_prop_state_memos(text or "")).strip() + "\n"
+
+
+def _sl_essence() -> dict:
+    _e = st.session_state.get("genre_essence")
+    if not _e or not _e.get("absolute_goal"):
+        _e = extract_genre_essence({}, genre_fallback=genre)
+        st.session_state["genre_essence"] = _e
+    return _e
+
+
+def _sl_scene_neighbors(h: dict, scene_no: int) -> tuple:
+    """씬 앞뒤의 '집필된' 씬 전문 (시퀀스 경계를 넘어 찾는다)."""
+    order = [int(s["no"]) for s in h.get("scenes", [])]
+    seq_of = {int(s["no"]): int(s["seq"]) for s in h.get("scenes", [])}
+    done = _sl_done()
+    prev_t = next_t = ""
+    if scene_no in order:
+        i = order.index(scene_no)
+        if i > 0:
+            pn = order[i - 1]
+            prev_t = SLW.get_scene_text(done.get(seq_of[pn], ""), pn)
+        if i + 1 < len(order):
+            nn = order[i + 1]
+            next_t = SLW.get_scene_text(done.get(seq_of[nn], ""), nn)
+    return prev_t, next_t
+
+
+def _sl_write_sequence(seq_no: int, instruction: str = "") -> None:
+    h = _sl_handoff()
+    done = _sl_done()
+    seqs = SLW.seq_numbers(h)
+    idx = seqs.index(seq_no)
+    prev_last = SLW.last_scene_text(done.get(seqs[idx - 1], "")) if idx > 0 else ""
+
+    # 잠긴 씬은 작가 확정본을 그대로 넘기고, 출력 후에도 다시 덮어쓴다 (이중 보존)
+    locked_nos = set(int(x) for x in st.session_state.get("locked_scenes", []))
+    cur_text = done.get(seq_no, "")
+    locked_texts = {}
+    for s in SLW.get_seq_scenes(h, seq_no):
+        n = int(s["no"])
+        if n in locked_nos and cur_text:
+            t = SLW.get_scene_text(cur_text, n)
+            if t:
+                locked_texts[n] = t
+
+    prompt = build_write_sequence_prompt(
+        genre=genre, handoff=h, seq_no=seq_no,
+        prev_last_scene_text=prev_last,
+        characters=st.session_state["characters"],
+        treatment=st.session_state["treatment"],
+        tone=st.session_state["tone"],
+        logline=st.session_state["logline"],
+        world=st.session_state["world"],
+        story_elements=st.session_state.get("story_elements", ""),
+        opening_strategy=st.session_state.get("opening_strategy", ""),
+        bjnd_data=st.session_state.get("bjnd_data", ""),
+        ending_payoff=st.session_state.get("ending_payoff", ""),
+        ending_payoff_type=st.session_state.get("ending_payoff_type", ""),
+        fact_based=st.session_state.get("fact_based", False),
+        historical=st.session_state.get("historical", False),
+        historical_type=st.session_state.get("historical_type", "팩션"),
+        genre_essence=_sl_essence(),
+        cycle_design=st.session_state.get("cycle_design", ""),
+        setup_payoff_table=st.session_state.get("setup_payoff_table", ""),
+        physical_cost_plan_text=st.session_state.get("physical_cost_plan_text", ""),
+        antagonist_actions=st.session_state.get("antagonist_actions", ""),
+        locked_scene_texts=locked_texts,
+        user_instruction=instruction,
+    )
+    st.markdown(f'<div class="beat-tag">시퀀스 {seq_no} 집필 중…</div>', unsafe_allow_html=True)
+    result = st.write_stream(stream_ai(prompt, tokens=SEQ_WRITE_TOKENS))
+    result = _sl_clean(result)
+    for n, t in locked_texts.items():
+        if SLW.get_scene_text(result, n):
+            result = SLW.replace_scene_text(result, n, t)
+    if cur_text:
+        _sl_push("seq_history", seq_no, cur_text)
+    done[seq_no] = result
+
+
+def _sl_rewrite_scene(seq_no: int, scene_no: int, instruction: str) -> None:
+    h = _sl_handoff()
+    done = _sl_done()
+    cur = SLW.get_scene_text(done.get(seq_no, ""), scene_no)
+    prev_t, next_t = _sl_scene_neighbors(h, scene_no)
+    prompt = build_rewrite_scene_prompt(
+        genre=genre, handoff=h, scene_no=scene_no,
+        current_scene_text=cur, prev_scene_text=prev_t, next_scene_text=next_t,
+        characters=st.session_state["characters"],
+        tone=st.session_state["tone"],
+        logline=st.session_state["logline"],
+        world=st.session_state["world"],
+        fact_based=st.session_state.get("fact_based", False),
+        historical=st.session_state.get("historical", False),
+        historical_type=st.session_state.get("historical_type", "팩션"),
+        genre_essence=_sl_essence(),
+        user_instruction=instruction,
+    )
+    st.markdown(f'<div class="beat-tag">S#{scene_no} 다시 쓰는 중…</div>', unsafe_allow_html=True)
+    result = _sl_clean(st.write_stream(stream_ai(prompt, tokens=8000)))
+    parsed = SLW.parse_scenes(result)
+    if not parsed:
+        st.error("재집필 결과에서 씬 헤딩(S#)을 찾지 못해 반영하지 않았습니다.")
+        return
+    new_scene = SLW.get_scene_text(result, parsed[0]["no"])
+    _sl_push("scene_history", scene_no, cur)
+    done[seq_no] = SLW.replace_scene_text(done[seq_no], scene_no, new_scene)
+
+
+def _sl_all_text(with_headers: bool = True) -> str:
+    h = _sl_handoff()
+    parts = []
+    for n in SLW.seq_numbers(h):
+        t = _sl_done().get(n)
+        if not t:
+            continue
+        body = _normalize_screenplay_blank_lines(t)
+        if with_headers:
+            q = SLW.get_sequence(h, n)
+            parts.append(f"{'='*60}\n시퀀스 {n}. {q.get('label', '')}\n{'='*60}\n\n{body}")
+        else:
+            parts.append(body)
+    return "\n\n\n".join(parts)
+
+
+if _SL_MODE:
+    _h = _sl_handoff()
+    _done = _sl_done()
+    _seqs = SLW.seq_numbers(_h)
+    st.markdown(
+        '<div class="section-header">✍️ STEP 2 · 시퀀스 집필 '
+        '<span class="en">SCENE LIST MODE · WRITE BY SEQUENCE</span></div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div class="small-meta">Creator가 잠근 씬리스트 {len(_h.get("scenes", []))}씬을 '
+        f'{len(_seqs)}개 시퀀스로 나눠 집필합니다. 씬 추가·장소 변경·순서 변경은 금지되며, '
+        f'집필 직후 씬리스트 대조와 말투 1차 검출이 자동으로 실행됩니다.</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── 핵심 요소 추출 (선택) — 15비트 모드와 같은 프롬프트 ──
+    with st.expander(
+        f"🔍 핵심 요소 추출 (선택) {'✅' if st.session_state.get('story_elements') else ''}",
+        expanded=False,
+    ):
+        st.caption("맥거핀·캐릭터 비밀·모티프를 추출해 매 시퀀스 집필에 주입합니다.")
+        if st.button("핵심 요소 추출", key="sl_extract_btn", use_container_width=True):
+            _ep = build_extract_elements_prompt(
+                genre=genre,
+                logline=st.session_state["logline"],
+                characters=st.session_state["characters"],
+                structure=st.session_state["structure"],
+                scene_design=st.session_state["scene_design"],
+                treatment=st.session_state["treatment"],
+                tone=st.session_state["tone"],
+                world=st.session_state["world"],
+            )
+            st.session_state["story_elements"] = st.write_stream(
+                stream_ai(_ep, model=ANTHROPIC_MODEL_PLAN))
+            st.rerun()
+        if st.session_state.get("story_elements"):
+            st.text(st.session_state["story_elements"])
+
+    # ── 시퀀스별 영역 ──
+    _locked = set(int(x) for x in st.session_state.get("locked_scenes", []))
+    for _n in _seqs:
+        _q = SLW.get_sequence(_h, _n)
+        _sc = SLW.get_seq_scenes(_h, _n)
+        _range = f"S#{_sc[0]['no']}~{_sc[-1]['no']}, {len(_sc)}씬" if _sc else "씬 없음"
+        _txt = _done.get(_n, "")
+        _rep = SLW.verify_against_scene_list(_txt, _h, _n) if _txt else None
+        _sp = SLW.check_speech_registers(_txt, _h, _n) if _txt else None
+        if not _txt:
+            _mark = "⬜"
+        elif _rep["ok"] and not _sp["flags"]:
+            _mark = "✅"
+        else:
+            _mark = f"⚠️ 이탈 {len(_rep['issues'])} · 말투 {len(_sp['flags'])}"
+        with st.expander(f"시퀀스 {_n} · {_q.get('label', '')} ({_range}) {_mark}",
+                         expanded=False):
+            if _q.get("goal"):
+                st.caption(f"목표: {_q['goal']}")
+            if not _txt:
+                st.text("\n\n".join(SLW.format_scene_line(s) for s in _sc))
+                continue
+
+            # W3 — 씬리스트 대조
+            if _rep["ok"]:
+                st.success(SLW.format_scene_list_report(_rep))
+            else:
+                st.warning(SLW.format_scene_list_report(_rep))
+            # W4 — 말투 1차 검출
+            _sp_text = SLW.format_speech_report(_sp)
+            if _sp["flags"]:
+                st.warning("말투 1차 검출 (종결어미 기준 · 최종 판단은 작가)\n\n" + _sp_text)
+            else:
+                st.caption(_sp_text)
+
+            st.text(_normalize_screenplay_blank_lines(_txt))
+
+            # ── 시퀀스 다시 쓰기 / 되돌리기 ──
+            st.markdown("---")
+            _note = st.text_input("시퀀스 수정 지시 (선택)", key=f"sl_seq_note_{_n}",
+                                  placeholder="예: 서목사 압박을 더 차갑게 / 두철 분량 늘리기")
+            _c1, _c2 = st.columns([3, 1])
+            with _c1:
+                if st.button(f"🔄 시퀀스 {_n} 다시 쓰기 (잠긴 씬 보존)",
+                             key=f"sl_seq_rw_{_n}", use_container_width=True):
+                    _sl_write_sequence(_n, _note)
+                    st.rerun()
+            with _c2:
+                _hc = len((st.session_state.get("seq_history") or {}).get(_n, []))
+                if st.button("↩️ 되돌리기", key=f"sl_seq_undo_{_n}",
+                             use_container_width=True, disabled=(_hc == 0),
+                             help=f"남은 백업 {_hc}개"):
+                    _old = _sl_pop("seq_history", _n)
+                    if _old:
+                        _done[_n] = _old
+                        st.rerun()
+
+            # ── W6 씬 단위 ──
+            st.markdown("---")
+            st.markdown(
+                '<div style="font-size:.78rem;color:#191970;font-weight:700;">'
+                '✂️ 씬 단위 손보기 — 다시 쓰기 · 직접 수정 · 잠금</div>',
+                unsafe_allow_html=True,
+            )
+            _nos = [int(s["no"]) for s in _sc]
+            _issue_nos = {i["no"] for i in _rep["issues"]} | {f["no"] for f in _sp["flags"]}
+            _pick = st.selectbox(
+                "씬 선택", _nos, key=f"sl_pick_{_n}",
+                format_func=lambda x: f"S#{x}" + (" 🔒" if x in _locked else "")
+                + (" ⚠️" if x in _issue_nos else ""),
+            )
+            _cur_scene = SLW.get_scene_text(_txt, _pick)
+            _edit = st.text_area("씬 원고", value=_cur_scene, height=280,
+                                 key=f"sl_edit_{_n}_{_pick}_{hash(_cur_scene)}")
+            _s_note = st.text_input("이 씬 수정 지시 (선택)", key=f"sl_scene_note_{_n}_{_pick}",
+                                    placeholder="예: 대사 방식 고백인데 터지는 순간이 약하다")
+            _d1, _d2, _d3, _d4 = st.columns(4)
+            with _d1:
+                if st.button("💾 직접 수정 저장 (잠금)", key=f"sl_save_{_n}_{_pick}",
+                             use_container_width=True, disabled=not _cur_scene):
+                    _sl_push("scene_history", _pick, _cur_scene)
+                    _done[_n] = SLW.replace_scene_text(_txt, _pick, _edit)
+                    if _pick not in _locked:
+                        st.session_state.setdefault("locked_scenes", []).append(_pick)
+                    st.rerun()
+            with _d2:
+                if st.button("🔄 이 씬 다시 쓰기", key=f"sl_scene_rw_{_n}_{_pick}",
+                             use_container_width=True,
+                             disabled=(not _cur_scene) or (_pick in _locked),
+                             help="잠긴 씬은 잠금을 풀어야 다시 쓸 수 있습니다."):
+                    _sl_rewrite_scene(_n, _pick, _s_note)
+                    st.rerun()
+            with _d3:
+                _shc = len((st.session_state.get("scene_history") or {}).get(_pick, []))
+                if st.button("↩️ 씬 되돌리기", key=f"sl_scene_undo_{_n}_{_pick}",
+                             use_container_width=True, disabled=(_shc == 0),
+                             help=f"남은 백업 {_shc}개"):
+                    _old = _sl_pop("scene_history", _pick)
+                    if _old:
+                        _done[_n] = SLW.replace_scene_text(_txt, _pick, _old)
+                        st.rerun()
+            with _d4:
+                _lock_label = "🔓 잠금 해제" if _pick in _locked else "🔒 잠금"
+                if st.button(_lock_label, key=f"sl_lock_{_n}_{_pick}", use_container_width=True):
+                    _ls = [int(x) for x in st.session_state.get("locked_scenes", [])]
+                    if _pick in _ls:
+                        _ls.remove(_pick)
+                    else:
+                        _ls.append(_pick)
+                    st.session_state["locked_scenes"] = _ls
+                    st.rerun()
+
+    # ── 다음 시퀀스 집필 버튼 ──
+    _next = next((n for n in _seqs if n not in _done), None)
+    if _next is not None:
+        _nq = SLW.get_sequence(_h, _next)
+        st.markdown(
+            f'<div class="beat-tag">시퀀스 {_next} / {len(_seqs)}</div> '
+            f'<span style="font-weight:700">{_nq.get("label", "")}</span>',
+            unsafe_allow_html=True,
+        )
+        if st.button(f"시퀀스 {_next} 집필", type="primary", use_container_width=True,
+                     key="sl_write_next_btn"):
+            _sl_write_sequence(_next)
+            st.rerun()
+    else:
+        st.markdown(
+            '<div class="callout"><div class="cl">COMPLETE</div>'
+            '전 시퀀스 집필 완료. 각 시퀀스의 검증 결과를 확인하고 씬 단위로 손보세요.</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── 다운로드 ──
+    if _done:
+        st.markdown(
+            '<div class="section-header">📄 다운로드 <span class="en">EXPORT · SAVE ANYTIME</span></div>',
+            unsafe_allow_html=True,
+        )
+        _cnt = f"{len(_done)}/{len(_seqs)}"
+        _e1, _e2, _e3 = st.columns(3)
+        with _e1:
+            st.download_button(
+                label=f"TXT 저장 ({_cnt})", data=_sl_all_text(),
+                file_name=_build_download_filename(st.session_state.get("title", ""), genre, "txt"),
+                mime="text/plain", use_container_width=True, key="sl_txt_dl",
+            )
+        with _e2:
+            try:
+                _act_map = {"__total__": list(_seqs)}
+                for _sn in _done:
+                    _a = SLW.act_of_seq(_h, _sn)
+                    _act_map[_sn] = f"{_a}막" if _a else "본문"
+                _docx = make_docx_bytes(
+                    genre, {k: _done[k] for k in sorted(_done)},
+                    title=st.session_state.get("title", ""),
+                    fact_based=st.session_state.get("fact_based", False),
+                    historical=st.session_state.get("historical", False),
+                    historical_type=st.session_state.get("historical_type", "팩션"),
+                    act_map=_act_map,
+                )
+                st.download_button(
+                    label=f"DOCX 저장 ({_cnt})", data=_docx,
+                    file_name=_build_download_filename(st.session_state.get("title", ""), genre, "docx"),
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True, key="sl_docx_dl",
+                )
+            except ImportError:
+                st.caption("DOCX: python-docx 미설치 — pip install python-docx")
+        with _e3:
+            st.download_button(
+                label=f"JSON 저장 ({_cnt})", data=export_session_backup(),
+                file_name=make_backup_filename(st.session_state.get("title", "") or "Untitled", len(_done)),
+                mime="application/json", use_container_width=True, key="sl_json_dl",
+            )
+        st.caption("JSON은 원고 + 씬리스트 + 잠금 상태를 함께 담은 작업 상태 파일입니다. "
+                   "STEP 1의 백업 불러오기로 복원됩니다.")
+
+
+# ═══════════════════════════════════════════════════════════
 # RESET
 # ═══════════════════════════════════════════════════════════
 st.markdown("---")
@@ -3429,4 +3499,4 @@ with col_r2:
             del st.session_state[k]
         st.rerun()
 
-st.caption("© 2026 BLUE JEANS PICTURES · Writer Engine v3.0")
+st.caption(f"© 2026 BLUE JEANS PICTURES · Writer Engine {ENGINE_VERSION}")
