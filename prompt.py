@@ -1,7 +1,33 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v4.0.0
+# BLUE JEANS SCREENPLAY WRITER ENGINE v4.0.1
 # prompt.py — Full Version (Creator Engine v2.8.2 동기화)
 # © 2026 BLUE JEANS PICTURES
+#
+# v4.0.1 주요 변경사항 (2026-10-01) — 코미디 결합 장르 수정
+# - Mr. MOON 진단: "부활은 코믹 액션이다. 장르 직접 입력이 안 된다. 수정이 반드시 필요."
+# - 점검 결과 드러난 결함 4건과 수정:
+#   1) "코믹"을 코미디로 인식 못 함 → _is_comedy()에 "코믹"·"코메디" 추가.
+#      (scene_sequence.py is_comedy()도 동일 키워드로 동기화)
+#   2) 결합 장르에서 코미디 부스터 누락 — 부스터를 하나만 고르는 구조라
+#      액션 코미디 = ACTION만, 범죄 코미디 = THRILLER만 받았다.
+#      → 코미디 이중 레이어 신설(_comedy_layer_applies / COMEDY_LAYER_BRIDGE).
+#        사극 이중 레이어와 같은 원리: 장르 부스터 = 판돈, COMEDY 부스터 = 웃음 엔진.
+#        사극까지 겹치면 3겹(배경 + 장르 + 웃음). 자가검증도 COMEDY 체크 추가.
+#        로맨틱 코미디는 ROMCOM 부스터가 웃음을 포함하므로 대상 아님.
+#   3) 강제 규칙 오판 — 로맨스 없는 코미디(코미디 단독·액션 코미디)에
+#      로코 체크(로맨스 상대 신체 언어 등)가 들어갔다.
+#      → COMEDY_ENFORCEMENT 신설. 결합 장르는 판돈 장르 체크 + 코미디 체크 동시,
+#        '뒤 장르 = 본질' 순서로 배치.
+#   4) 장르 본질 정규화가 목록 순서로 판정해 "액션 코미디" 본질이 '액션'으로 뒤집힘
+#      → 문자열 안 실제 위치로 판정(맨 뒤 장르 = 본질). 액션 코미디 = "웃겨야 한다".
+#      ※ 같은 원리로 "코미디 드라마" → 드라마, "느와르 액션" → 액션으로 판정이 바뀐다.
+# - "코믹 로맨스"는 이제 코미디+로맨스로 인식되어 ROMCOM 부스터를 받는다(기존 ROMANCE).
+# - main.py: 장르 직접 입력 칸 추가(목록보다 우선), 목록에 "액션 코미디" 추가,
+#   Creator JSON의 장르를 STEP 1에 자동 반영(목록에 없으면 직접 입력 칸으로).
+#   _strip_prop_state_memos가 접미사 붙은 자가검증 태그(<GENRE_BOOSTER_CHECK_ACTION> 등)도
+#   제거하도록 보강 — 결합 장르는 체크 블록이 둘이라 유출 위험이 커진다.
+#
+# ─────────────────────────────────────────────────────────────
 #
 # v4.0.0 주요 변경사항 (2026-10-01) — 메이저: 집필 단위 전환
 # - Mr. MOON 요청: "비트 단위 자유 집필에서 씬리스트 기준 집필로 전환한다.
@@ -693,7 +719,7 @@
 # - Creator JSON 자동 로더
 # ─────────────────────────────────────────────────────────────
 
-ENGINE_VERSION = "v4.0.0"
+ENGINE_VERSION = "v4.0.1"
 ENGINE_BUILD_DATE = "2026-10-01"
 
 
@@ -1034,10 +1060,24 @@ def _normalize_genre_for_essence(genre: str) -> str:
         return g
     # 부분 매칭 (장르 이름 맨 뒤가 본질을 결정 — Writer Engine 룰)
     # "액션 스릴러" → 스릴러, "로맨틱 코미디" → 로맨틱 코미디(직접 매치)
-    for key in ["로맨틱 코미디", "범죄/스릴러", "조폭", "느와르", "마약", "사기",
-                "호러", "스릴러", "액션", "코미디", "드라마", "로맨스", "멜로"]:
-        if key in g:
-            return key
+    # ★ v4.0.1 — 목록 순서가 아니라 문자열 안의 실제 위치로 판정한다.
+    #   기존엔 "액션 코미디"가 목록 순서 때문에 '액션'으로 잡혀 본질이 뒤집혔다.
+    #   가장 뒤에서 끝나는 키를 고르고, 끝 위치가 같으면 긴 키(로맨틱 코미디 등) 우선.
+    keys = ["로맨틱 코미디", "범죄/스릴러", "조폭", "느와르", "마약", "사기",
+            "호러", "스릴러", "액션", "코미디", "드라마", "로맨스", "멜로"]
+    best, best_end, best_len = "", -1, 0
+    for key in keys:
+        pos = g.rfind(key)
+        if pos < 0:
+            continue
+        end = pos + len(key)
+        if end > best_end or (end == best_end and len(key) > best_len):
+            best, best_end, best_len = key, end, len(key)
+    if best:
+        return best
+    # "코믹 ○○"처럼 코미디 표기가 '코믹'뿐이면 뒤 장르가 본질 → 위 루프에서 처리됨.
+    if "코믹" in g or "코메디" in g:
+        return "코미디"
     return ""
 
 
@@ -2598,7 +2638,8 @@ GENRE BOOSTER — COMEDY (단독 코미디 비트 강제 규칙 v3.2.1)
 [적용 범위]
 - 〈극한직업〉·〈조선명탐정〉·〈럭키〉 같은 단독 코미디
 - ROMCOM이 아닌 코미디 (로맨스 결합 시 ROMCOM 부스터로 자동 분기)
-- 범죄 코미디는 THRILLER, 코믹 액션은 ACTION 부스터로 자동 분기
+- ★ v4.0.1: 범죄 코미디·코믹 액션·코믹 호러는 해당 장르 부스터(판돈) + 이 부스터(웃음)를
+  함께 받는다. 위험은 진짜고, 인물의 반응이 웃기다.
 
 [코미디 코어 DNA 5종]
 
@@ -3078,6 +3119,69 @@ HELPER CHARACTER RULE — 조력자 캐릭터 자립성 룰 v3.2
 # build_write_beat_prompt에서 장르 판별 후 적합한 부스터 주입.
 # ═══════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════
+# ★ v4.0.1 — 코미디 이중 레이어 (액션 코미디·범죄 코미디·코믹 호러 등)
+# Mr. MOON: "부활은 코믹 액션이다." 기존 구조는 장르 부스터를 하나만 골라
+# 코미디가 다른 장르와 결합하면 코미디 부스터가 빠졌다(웃음 장치 누락).
+# 사극(PERIOD) 이중 레이어와 같은 원리로, 코미디를 '웃음 엔진' 레이어로 얹는다.
+# 로맨틱 코미디는 ROMCOM 부스터가 이미 웃음을 포함하므로 대상이 아니다.
+# ═══════════════════════════════════════════════════════════
+
+def _comedy_layer_applies(genre: str) -> bool:
+    """코미디가 다른 장르와 결합돼 코어 부스터가 COMEDY가 아닌 경우 True."""
+    if not genre or not _is_comedy(genre) or _is_romcom(genre):
+        return False
+    return _select_core_genre_booster(genre) not in ("", GENRE_BOOSTER_COMEDY)
+
+
+COMEDY_LAYER_BRIDGE = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+★ 장르 + 코미디 동시 적용 — 역할 분리 (v4.0.1)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+위 장르 부스터는 '판돈'을 담당한다 — 위협·추격·대결이 진짜로 작동하는 것.
+아래 COMEDY 부스터는 '웃음 엔진'을 담당한다 — 인물의 결함·고집·엇박이 만드는 웃음.
+둘은 대체 관계가 아니라 같은 씬에서 겹쳐 작동한다.
+
+★ 위험은 진짜고, 인물의 반응이 웃기다.
+  - 위협을 가짜로 만들어 웃기지 마라. 판돈이 꺼지면 액션도 코미디도 같이 죽는다.
+  - 인물은 자기가 웃긴 줄 모른다. 목숨이 걸린 상황에서도 자기 원칙·직업 습관대로
+    진지하게 움직이고, 그 진지함이 상황과 어긋나서 관객이 웃는다.
+  - 예) 형사들이 잠복용으로 차린 가게가 장사가 너무 잘돼서 정작 잠복을 못 한다.
+    그 사이 범인 일당은 진짜로 움직이고 있다.
+★ 웃음과 긴장은 교대가 아니라 동시다. 웃긴 씬 따로, 무서운 씬 따로 나누지 마라.
+""".strip()
+
+
+COMEDY_ENFORCEMENT = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+★★ 코미디 — 매 비트 장르 강제 규칙 (v4.0.1) ★★
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+★ 집필한 단위(비트·시퀀스)를 다 쓴 뒤 아래 체크를 통과해야 한다. 2개 이상 No면 다시 써라.
+
+[체크 1: 웃음 밀도]
+□ 관객이 웃는 순간이 최소 2개 있는가? "어디서 웃는가"를 씬 번호로 답할 수 있어야 한다.
+
+[체크 2: 코믹 결함 작동]
+□ 주인공의 결함·고집이 사고를 치거나 상황을 꼬이게 만드는가?
+  결함이 작동하지 않으면 그 단위는 코미디가 아니라 드라마다.
+
+[체크 3: 진지함의 원칙]
+□ 인물이 자기 상황의 우스움을 모른 채 진지하게 행동하는가?
+  농담을 대사로 직접 하거나, 인물이 웃기려고 애쓰면 웃음이 사라진다.
+
+[체크 4: Topper]
+□ 첫 웃음 직후 한 번 더 비트는 펀치가 있는가?
+
+[체크 5: 장르 분리 테스트]
+□ 이 단위를 웃음 없는 다른 장르 영화에 그대로 넣어도 성립하는가? Yes면 실패.
+
+[결합 장르일 때 추가 — 액션·범죄·호러 코미디]
+□ 위험 씬 안에서 웃음이 함께 작동하는가? (웃긴 씬과 위험한 씬이 따로 놀면 실패)
+□ 웃음 때문에 위협이 가짜처럼 보이지 않는가? (판돈 유지)
+""".strip()
+
+
 def _select_core_genre_booster(genre: str) -> str:
     """시대 배경을 제외한 '장르(재미 엔진)' 부스터 하나를 선택.
     
@@ -3152,6 +3256,11 @@ def get_genre_booster_module(genre: str, historical: bool = False) -> str:
     if not blocks:
         return ""
     
+    # ★ v4.0.1 — 코미디 이중 레이어 (사극이 함께 걸리면 3겹: 배경 + 장르 + 웃음)
+    comedy_tail = ""
+    if _comedy_layer_applies(genre):
+        comedy_tail = "\n\n" + COMEDY_LAYER_BRIDGE + "\n\n" + GENRE_BOOSTER_COMEDY
+    
     # 사극 + 장르가 함께 걸린 경우, 역할 안내를 사이에 넣어 충돌 방지
     if len(blocks) == 2:
         bridge = (
@@ -3163,9 +3272,9 @@ def get_genre_booster_module(genre: str, historical: bool = False) -> str:
             "둘은 대체 관계가 아니라 겹쳐 작동한다 — 시대의 무대 위에서 장르의 재미가 터진다.\n"
             "예) 사극 스릴러 = 조선의 권력 구조(PERIOD) 안에서 정보·추격·반전(THRILLER)이 작동.\n"
         )
-        return blocks[0] + bridge + "\n\n" + blocks[1]
+        return blocks[0] + bridge + "\n\n" + blocks[1] + comedy_tail
     
-    return blocks[0]
+    return blocks[0] + comedy_tail
 
 
 def get_helper_character_rule() -> str:
@@ -3293,6 +3402,12 @@ def get_genre_booster_check_block(genre: str, historical: bool = False) -> str:
     core_spec = _get_booster_spec(genre)
     if core_spec:
         blocks.append(_render_booster_check(core_spec))
+    # ★ v4.0.1 — 코미디 이중 레이어면 COMEDY 체크도 함께
+    if _comedy_layer_applies(genre):
+        blocks.append(_render_booster_check({'name': 'COMEDY', 'required': 2, 'rules': [
+            "슬랩스틱 / 신체 코미디", "캐릭터 결함의 코믹 노출",
+            "Comic Specificity", "Status Flip", "Topper",
+        ]}))
     
     if not blocks:
         return ""
@@ -5374,7 +5489,9 @@ ACT_SCENE_TARGETS = {
 
 def _is_comedy(genre: str) -> bool:
     g = genre.lower()
-    return "코미디" in g or "comedy" in g or "롬코" in g
+    # ★ v4.0.1 — "코믹"(코믹 액션·코믹 호러 등)과 표기 변형 "코메디"도 코미디로 인식
+    return ("코미디" in g or "comedy" in g or "롬코" in g
+            or "코믹" in g or "코메디" in g)
 
 def _is_horror(genre: str) -> bool:
     g = genre.lower()
@@ -7322,11 +7439,26 @@ def get_genre_enforcement(genre: str) -> str:
     dna = _resolve_opening_dna(genre)
     blocks = []
 
+    # ★ v4.0.1 — 코미디 결합 장르(액션·범죄·호러 코미디 등): 판돈 장르 + 코미디 동시.
+    #   순서는 '뒤 장르 = 본질' 법칙 — 본질 장르의 체크를 먼저 둔다.
+    if _comedy_layer_applies(genre):
+        if _is_horror(genre):
+            stake = HORROR_ENFORCEMENT
+        elif _is_thriller(genre) or _is_mystery(genre):
+            stake = THRILLER_ENFORCEMENT
+        elif _is_action(genre):
+            stake = ACTION_ENFORCEMENT
+        else:
+            stake = DRAMA_ENFORCEMENT
+        pair = [COMEDY_ENFORCEMENT, stake] if dna == "comedy" else [stake, COMEDY_ENFORCEMENT]
+        return "\n\n".join(pair)
+
     # 로맨틱 코미디 특수 처리 — 두 번째 장르가 코미디면 ROMCOM_ENFORCEMENT
     if _is_comedy(genre) and _is_romance(genre):
         blocks.append(ROMCOM_ENFORCEMENT)
     elif dna == "comedy":
-        blocks.append(ROMCOM_ENFORCEMENT)
+        # ★ v4.0.1 — 로맨스 없는 코미디에 로코 체크(신체 언어·로맨스 상대)가 들어가던 오판 수정
+        blocks.append(COMEDY_ENFORCEMENT)
     elif dna == "romance":
         # 순수 로맨스 — ROMCOM_ENFORCEMENT의 대사 강제는 유지하되 웃음 강제는 완화
         blocks.append(ROMCOM_ENFORCEMENT)

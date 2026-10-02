@@ -1,5 +1,9 @@
 # ─────────────────────────────────────────────────────────────
 # BLUE JEANS SCREENPLAY WRITER ENGINE — main.py
+# v4.0.1 (2026-10-01) — 장르 직접 입력
+#   * STEP 1 장르: 목록 선택 + 직접 입력 칸(입력하면 목록보다 우선). 목록에 "액션 코미디" 추가.
+#   * Creator JSON의 장르를 자동 반영 (목록에 없으면 직접 입력 칸으로, "미지정"은 무시).
+#   * _strip_prop_state_memos: <GENRE_BOOSTER_CHECK_ACTION> 같은 접미사 태그도 제거.
 # v4.0.0 (2026-10-01) — 씬리스트 모드 신설 (Creator v2.8.2 writer_handoff_v28)
 #   * STEP 1 JSON 로드 시 씬리스트 자동 감지. 없으면 "씬리스트 없음" 표시 + 15비트 방식.
 #   * 씬리스트 모드: 15비트 씬 플랜·비트 집필·권역 검증 대신 시퀀스 집필 섹션 표시.
@@ -49,6 +53,12 @@ except Exception:
 
 ANTHROPIC_MODEL_WRITE = "claude-opus-4-6"      # 집필 (비트 쓰기, 다시 쓰기) — 최고 품질
 ANTHROPIC_MODEL_PLAN  = "claude-sonnet-4-6"    # 구조 작업 (씬 플랜, 요소 추출) — 비용 효율
+# ★ v4.0.1 — 장르 목록 (Creator Engine과 동일 + 액션 코미디). 직접 입력이 목록보다 우선.
+GENRE_LIST = [
+    "미지정", "범죄/스릴러", "드라마", "액션", "로맨스", "코미디",
+    "로맨틱 코미디", "액션 코미디", "호러/공포", "SF", "판타지",
+    "시대극/사극", "느와르", "미스터리", "전쟁", "뮤지컬", "다큐/논픽션",
+]
 SEQ_WRITE_TOKENS = 48000   # ★ v4.0.0 — 시퀀스 1회 집필 최대 출력 (최대 18씬 분량 여유)
 
 
@@ -297,7 +307,8 @@ def _strip_prop_state_memos(text: str) -> str:
     # ★ v3.2.0 — GENRE_BOOSTER_CHECK 태그 제거
     # AI가 비트 끝에 작성하는 자가 검증 메모도 본문 노출 금지.
     pattern_booster = _re_prop.compile(
-        r'\n*<GENRE_BOOSTER_CHECK>[\s\S]*?</GENRE_BOOSTER_CHECK>\n*',
+        # ★ v4.0.1 — 접미사 태그(<GENRE_BOOSTER_CHECK_ACTION> 등)도 제거
+        r'\n*<GENRE_BOOSTER_CHECK(?:_[A-Z_]+)?>[\s\S]*?</GENRE_BOOSTER_CHECK(?:_[A-Z_]+)?>\n*',
         _re_prop.IGNORECASE
     )
     text = pattern_booster.sub('\n', text)
@@ -778,6 +789,7 @@ for k, v in {
     "scene_list_handoff": {},  # Creator writer_handoff_v28 로드 결과
     "creator_json_loaded": False,
     "use_scene_list_mode": True,
+    "genre_custom": "",        # ★ v4.0.1 — 장르 직접 입력
     "seq_done": {},            # 시퀀스 번호 → 원고
     "seq_history": {},         # 시퀀스 번호 → 이전 버전들
     "scene_history": {},       # 씬 번호 → 이전 버전들
@@ -852,6 +864,7 @@ _BACKUP_KEYS = [
     "beats_history",
     # ★ v4.0.0 — 씬리스트 모드
     "scene_list_handoff", "creator_json_loaded", "use_scene_list_mode",
+    "genre_custom",
     "seq_done", "seq_history", "scene_history", "locked_scenes",
 ]
 
@@ -1851,6 +1864,13 @@ with st.expander("⚡ Creator Engine JSON 업로드 (자동 채우기)", expande
                 if k in st.session_state or k in FIELDS:
                     st.session_state[k] = v
             
+            # ★ v4.0.1 — Creator JSON의 장르 자동 반영 ("미지정"·빈 값은 무시)
+            _cproj = creator_data.get("project") if isinstance(creator_data.get("project"), dict) else creator_data
+            _cgenre = str(_cproj.get("genre", "") or "").strip()
+            if _cgenre and _cgenre != "미지정":
+                st.session_state["genre"] = _cgenre
+                st.session_state["genre_custom"] = "" if _cgenre in GENRE_LIST else _cgenre
+
             # ★ v3.6.0 — 장르 본질 3중 선언 추출 (Creator v2.5.5 연동)
             current_genre = st.session_state.get("genre", "")
             essence = extract_genre_essence(creator_data, genre_fallback=current_genre)
@@ -2011,17 +2031,28 @@ col_g1, col_g2 = st.columns(2)
 with col_g1:
     # Creator Engine과 동일한 장르 목록 (로맨틱 코미디 포함)
     # _is_comedy/_is_romance가 "로맨틱 코미디"를 자동 감지해 COMEDY+ROMANCE 둘 다 주입
-    genre_list = [
-        "미지정", "범죄/스릴러", "드라마", "액션", "로맨스", "코미디",
-        "로맨틱 코미디", "호러/공포", "SF", "판타지",
-        "시대극/사극", "느와르", "미스터리", "전쟁", "뮤지컬", "다큐/논픽션"
-    ]
+    # ★ v4.0.1 — 목록에 없는 장르는 직접 입력 칸으로. 직접 입력이 목록보다 우선.
+    genre_list = GENRE_LIST
     current_genre = st.session_state.get("genre", "범죄/스릴러")
     if current_genre not in genre_list:
+        # 외부(백업 복원 등)에서 들어온 목록 밖 장르만 직접 입력 칸으로 옮긴다.
+        # 작가가 직접 입력 칸을 지운 경우(직전 적용값과 같음)는 되살리지 않는다.
+        if (current_genre != st.session_state.get("_genre_applied")
+                and not str(st.session_state.get("genre_custom", "")).strip()):
+            st.session_state["genre_custom"] = current_genre
         current_genre = "미지정"
-    genre = st.selectbox("장르", genre_list,
-                          index=genre_list.index(current_genre))
+    _genre_sel = st.selectbox("장르", genre_list,
+                              index=genre_list.index(current_genre))
+    _genre_custom = st.text_input(
+        "장르 직접 입력 (선택 · 입력하면 목록보다 우선)",
+        key="genre_custom",
+        placeholder="예: 코믹 액션 / 범죄 코미디 / 사극 스릴러",
+    )
+    genre = _genre_custom.strip() or _genre_sel
     st.session_state["genre"] = genre
+    st.session_state["_genre_applied"] = genre
+    if _genre_custom.strip():
+        st.caption(f"적용 장르: {genre} — 뒤에 붙은 장르가 본질입니다.")
 with col_g2:
     fmt = "영화 (장편)"
     st.session_state["fmt"] = fmt

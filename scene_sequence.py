@@ -3,6 +3,10 @@
 # scene_sequence.py — 씬 시퀀스 레이어 (권역·시간대·장르 1막 셋업 + 처방)
 # © 2026 BLUE JEANS PICTURES
 #
+# v1.1.1 (2026-10-01):
+# - is_comedy()에 "코믹"·"코메디" 추가 (prompt.py v4.0.1 _is_comedy와 동기화).
+#   "코믹 액션"이 코미디로 인식된다. 권역 정책은 기존 우선순위대로 액션이 먼저 걸린다.
+#
 # v1.1.0 (2026-08-07):
 # - Mr. MOON 진단: "검증해서 오류가 났는데 그 다음에 뭘 해야 하는지에 대한
 #   지침이 없다. 작업 순서를 번호로 가이드. 검증 위반을 보완하는 버튼이 있거나."
@@ -42,8 +46,8 @@ import re
 from collections import Counter, OrderedDict
 
 MODULE_NAME = "BLUE JEANS Story Engine — Scene Sequence Pack"
-MODULE_VERSION = "v1.1.0"
-MODULE_BUILD_DATE = "2026-08-07"
+MODULE_VERSION = "v1.1.1"
+MODULE_BUILD_DATE = "2026-10-01"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -61,7 +65,9 @@ def is_horror(genre: str) -> bool:
 
 def is_comedy(genre: str) -> bool:
     g = _g(genre)
-    return "코미디" in g or "comedy" in g or "롬코" in g or "스크루볼" in g or "screwball" in g
+    # ★ v1.1.1 — prompt.py _is_comedy()와 동기화: "코믹"·"코메디" 추가
+    return ("코미디" in g or "comedy" in g or "롬코" in g or "스크루볼" in g
+            or "screwball" in g or "코믹" in g or "코메디" in g)
 
 
 def is_romance(genre: str) -> bool:
