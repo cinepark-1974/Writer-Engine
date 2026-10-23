@@ -1,5 +1,15 @@
 # ─────────────────────────────────────────────────────────────
 # BLUE JEANS SCREENPLAY WRITER ENGINE — main.py
+# v4.1.0 (2026-10-23) — Market Lens VN 수신 (Creator v2.9.1 요청서 W-1~W-8)
+#   * JSON 적용 시 market_lens·reality_corrections 저장, "VN(베트남) 1차 · KR(한국) 2차" 표시
+#     (사이드바 + STEP 1 상단에 상시 표시 — 적용 완료 메시지는 rerun으로 사라지므로).
+#   * VN 작품: STEP 1에 "한국어를 구사하지 못하는 인물" 칸 (바이블 서술문으로 후보 자동 제안, 작가 확정).
+#   * 모든 집필 호출(15비트·재집필·위반 보완·시퀀스·씬)에 market_lens·reality_corrections 전달.
+#   * 출력의 <LOCAL_VERIFY>·<RATING_CHECK>를 원고에서 떼어 '현지 고증 체크리스트'로 모은다.
+#     _strip_prop_state_memos에도 같은 제거를 넣어 DOCX·TXT 유출 이중 차단.
+#   * '시장 렌즈 점검' 패널 — 언어 표기 누락·원어 병기·무속 어휘·한국 제도 어휘·이표기·정정 표현.
+#     표시만 한다. 자동 수정 없음.
+#   * 세션 백업에 새 키 추가만 (기존 백업 그대로 복구 가능).
 # v4.0.1 (2026-10-01) — 장르 직접 입력
 #   * STEP 1 장르: 목록 선택 + 직접 입력 칸(입력하면 목록보다 우선). 목록에 "액션 코미디" 추가.
 #   * Creator JSON의 장르를 자동 반영 (목록에 없으면 직접 입력 칸으로, "미지정"은 무시).
@@ -43,6 +53,12 @@ from prompt import (
     # ★ v4.0.0 신규 — 씬리스트 모드 (시퀀스 집필 / 씬 단위 재집필)
     build_write_sequence_prompt,
     build_rewrite_scene_prompt,
+    # ★ v4.1.0 신규 — Market Lens VN (Creator v2.9.1)
+    market_lens_has_vn,
+    market_codes_label,
+    extract_local_verify,
+    strip_local_verify,
+    run_market_checks,
 )
 
 # ★ v4.0.0 — 씬리스트 로더·검증 모듈 (없으면 씬리스트 모드 비활성)
@@ -335,6 +351,9 @@ def _strip_prop_state_memos(text: str) -> str:
     )
     text = pattern_check_header.sub('\n', text)
     
+    # ★ v4.1.0 — 현지 고증·수위 표시 블록 제거 (원고 밖 체크리스트로 따로 모은다)
+    text = strip_local_verify(text)
+
     # 연속된 빈 줄 정리 (3개 이상 → 2개)
     text = _re_prop.sub(r'\n{3,}', '\n\n', text)
     
@@ -587,6 +606,19 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
 
+    # ★ v4.1.0 — 시장 렌즈 표시 (VN 포함 시 W-2~W-8 작동)
+    _ml_side = st.session_state.get("market_lens") or {}
+    if _ml_side.get("primary"):
+        _ml_vn = market_lens_has_vn(_ml_side)
+        _rc_side = len(st.session_state.get("reality_corrections") or [])
+        st.markdown(f"""
+        <div style="padding:10px;background:{'#FFF8E1' if _ml_vn else '#F5F5F5'};border-radius:8px;border-left:3px solid {'#FFCB05' if _ml_vn else '#BDBDBD'};margin-top:12px;font-family:'Pretendard',sans-serif;">
+            <div style="font-size:.7rem;color:#191970;font-weight:700;letter-spacing:.05em;margin-bottom:4px;">🌏 시장 렌즈 (v4.1.0)</div>
+            <div style="font-size:.78rem;font-weight:700;color:#1A1A2E;">{market_codes_label(_ml_side)}</div>
+            <div style="font-size:.66rem;color:#444;margin-top:6px;">{'베트남 규칙 작동 — 대사 언어 표기(A39) · 팩 적용 범위 · 현지 고증' if _ml_vn else '한국 기준 규칙 그대로'}{f' · 사실성 정정 {_rc_side}건' if _rc_side else ''}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
     # ★ v4.0.0 — 집필 모드 표시 (씬리스트 / 15비트)
     _slh = st.session_state.get("scene_list_handoff") or {}
     if SLW is not None and _slh.get("available") and st.session_state.get("use_scene_list_mode", True):
@@ -794,6 +826,11 @@ for k, v in {
     "seq_history": {},         # 시퀀스 번호 → 이전 버전들
     "scene_history": {},       # 씬 번호 → 이전 버전들
     "locked_scenes": [],       # 작가 확정 씬 번호
+    # ★ v4.1.0 — Market Lens VN
+    "market_lens": {},             # Creator 정규화 시장 렌즈 (빈 dict = 렌즈 없음)
+    "reality_corrections": [],     # Creator Reality Gate 사실성 정정
+    "non_korean_speakers_raw": "", # 한국어 미구사 인물 (쉼표 구분, 작가 확정)
+    "local_verify": {},            # 출처 라벨 → <LOCAL_VERIFY>/<RATING_CHECK> 항목 목록
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -826,6 +863,137 @@ def stream_ai(prompt: str, tokens: int = 16000, model: str = ""):
                 yield text
     except Exception as e:
         yield f"\n\n❌ 오류: {e}"
+
+# ═══════════════════════════════════════════════════════════
+# ★ v4.1.0 — Market Lens VN 헬퍼
+# ═══════════════════════════════════════════════════════════
+
+def _capture_local_verify(raw_text: str, source: str) -> None:
+    """AI 출력에서 <LOCAL_VERIFY>·<RATING_CHECK> 항목을 떼어 세션에 모은다.
+    같은 출처(비트·시퀀스)를 다시 쓰면 그 출처의 항목만 새로 바꾼다."""
+    try:
+        items = extract_local_verify(raw_text or "", source=source)
+    except Exception:
+        items = []
+    store = st.session_state.setdefault("local_verify", {})
+    if items:
+        store[source] = items
+    elif source in store and ("<LOCAL_VERIFY>" in (raw_text or "") or "<RATING_CHECK>" in (raw_text or "")):
+        store[source] = []   # 블록은 있는데 항목이 없음(= '없음') → 이전 항목 비움
+
+
+def _non_korean_speakers() -> list:
+    raw = st.session_state.get("non_korean_speakers_raw", "") or ""
+    return [x.strip() for x in raw.replace("、", ",").split(",") if x.strip()]
+
+
+def _render_market_panel(full_text: str, extra_names: list = None) -> None:
+    """★ v4.1.0 — 시장 렌즈 점검 + 현지 고증 체크리스트. 표시만 한다 (자동 수정 없음)."""
+    lens = st.session_state.get("market_lens") or {}
+    rc = st.session_state.get("reality_corrections") or []
+    vn = market_lens_has_vn(lens)
+    if not full_text or (not vn and not rc):
+        return
+    rep = run_market_checks(full_text, lens, rc, _non_korean_speakers(), extra_names or [])
+    issues = 0
+    if rep.get("reality"):
+        issues += len(rep["reality"]["fail"])
+    if vn:
+        issues += len(rep["language"]["missing"]) + len(rep["language"]["original"])
+        issues += len(rep["misapply"]["shamanism"])
+    _lv_store = st.session_state.get("local_verify") or {}
+    _lv_items = [it for k in sorted(_lv_store) for it in _lv_store[k]]
+    _title = "🌏 시장 렌즈 점검 (v4.1.0)" if vn else "🧾 사실성 정정 점검 (v4.1.0)"
+    with st.expander(f"{_title} — {'확인 필요 ' + str(issues) + '건' if issues else '이상 없음'}",
+                     expanded=bool(issues)):
+        st.caption("파이썬이 원고 텍스트를 직접 센 결과입니다. 원고는 자동으로 고치지 않습니다 — 수정은 작가의 몫입니다.")
+
+        # W-3 사실성 정정
+        if rep.get("reality") is not None:
+            _r = rep["reality"]
+            if _r["fail"]:
+                st.error("사실성 정정 위반 (작가 반영 확정 항목의 '쓰지 말 표현')\n\n" + "\n".join(
+                    f"- {h['id']} '{h['term']}' — S#{', S#'.join(map(str, h['scenes'])) if h['scenes'] else '?'}"
+                    + (f" → 실제: {h['reality']}" if h['reality'] else "") for h in _r["fail"]))
+            if _r["warn"]:
+                st.warning("사실성 확인 필요 (작가 미결정 항목의 표현이 원고에 있음)\n\n" + "\n".join(
+                    f"- {h['id']} '{h['term']}' — S#{', S#'.join(map(str, h['scenes'])) if h['scenes'] else '?'}"
+                    for h in _r["warn"]))
+            if not _r["fail"] and not _r["warn"]:
+                st.caption(f"사실성 정정 {len(rc)}건 — 원고에 '쓰지 말 표현' 없음.")
+
+        if not vn:
+            return
+
+        # W-2 대사 언어 표기
+        _lg = rep["language"]
+        st.markdown("**대사 언어 표기 (A39)**")
+        if not _lg["targets"]:
+            st.caption("한국어 미구사 인물이 지정되지 않아 언어 표기 누락은 세지 않았습니다. STEP 1 칸에 인물을 적으면 점검합니다.")
+        elif _lg["missing"]:
+            st.warning(f"언어 표기 누락 {len(_lg['missing'])}줄 (대상 {', '.join(_lg['targets'])} · 대사 {_lg['checked']}줄 중)\n\n"
+                       + "\n".join(f"- S#{m['no']} {m['speaker']}: {m['line'][:60]}" for m in _lg["missing"][:40]))
+        else:
+            st.caption(f"언어 표기 누락 0줄 (대상 {', '.join(_lg['targets'])} · 대사 {_lg['checked']}줄).")
+        if _lg["original"]:
+            st.warning(f"원어(베트남 문자) 병기 {len(_lg['original'])}줄\n\n"
+                       + "\n".join(f"- S#{m['no']}: {m['line'][:60]}" for m in _lg["original"][:40]))
+        else:
+            st.caption("원어 병기 0줄.")
+
+        # W-4 · W-5
+        _ma = rep["misapply"]
+        st.markdown("**한국 기준 오적용 (W-4 · W-5)**")
+        if _ma["shamanism"]:
+            st.warning(f"한국 무속 어휘 {len(_ma['shamanism'])}건\n\n"
+                       + "\n".join(f"- S#{m['no']} '{m['term']}': {m['line'][:60]}" for m in _ma["shamanism"][:30]))
+        else:
+            st.caption("한국 무속 어휘 0건.")
+        if _ma["kr_institution"]:
+            st.info("한국 제도 직급·절차 어휘 — 베트남 기관 소속 인물의 장면인지 확인하세요. "
+                    "한국 제도 안의 인물(교민·한국 경찰 등)이면 정상입니다.\n\n"
+                    + "\n".join(f"- S#{m['no']} '{m['term']}': {m['line'][:60]}" for m in _ma["kr_institution"][:30]))
+        else:
+            st.caption("한국 제도 직급·절차 어휘 0건.")
+
+        # W-8
+        _nm = rep["names"]
+        st.markdown("**인명·지명 표기 (W-8)**")
+        if _nm["mixed"]:
+            st.warning("같은 이름의 다른 표기가 섞여 있습니다 (처음 쓴 표기로 고정 권장)\n\n"
+                       + "\n".join(f"- {x['name']} ↔ {', '.join(x['variants'])}" for x in _nm["mixed"]))
+        if _nm["nonstandard"]:
+            st.info("국립국어원 베트남어 표기 용례와 다른 관용 표기\n\n"
+                    + "\n".join(f"- {x['standard']} (원고: {', '.join(x['used'])}"
+                                 + (", 표준 표기도 함께 쓰임" if x["standard_also_used"] else "") + ")"
+                                 for x in _nm["nonstandard"]))
+        if not _nm["mixed"] and not _nm["nonstandard"]:
+            st.caption("이표기 없음.")
+
+        # W-6 · W-7 현지 고증 체크리스트
+        st.markdown("**현지 고증 체크리스트 (W-6)**")
+        _ver = [it for it in _lv_items if it["kind"] == "verify"]
+        _rat = [it for it in _lv_items if it["kind"] == "rating"]
+        _lines = [f"- {('S#' + str(it['no'])) if it['no'] else '-'} · {it['item']}"
+                  + (f" — {it['reason']}" if it['reason'] else "") + f"  ({it['source']})" for it in _ver]
+        if lens.get("verification_required"):
+            _lines += [f"- 렌즈 확인 필요 · {x}" for x in lens["verification_required"]]
+        if _lines:
+            st.text("\n".join(_lines))
+        else:
+            st.caption("고증 항목 없음.")
+        _src = " / ".join(f"{x.get('id', '')} {x.get('name', '')}".strip() + (f" ({x['as_of']})" if x.get("as_of") else "")
+                          for x in (lens.get("sources") or []) if x.get("id") or x.get("name"))
+        st.caption(f"렌즈 기준일 {lens.get('lens_data_as_of') or '미기재'}" + (f" · 출처 {_src}" if _src else ""))
+        if lens.get("expected_rating"):
+            st.markdown(f"**수위 표시 (W-7)** — 예상 등급 {lens['expected_rating']} "
+                        "(Idea Engine 창작적 판단 · 확정 등급 아님 · 수위 자동 조정 없음)")
+            if _rat:
+                st.text("\n".join(f"- {('S#' + str(it['no'])) if it['no'] else '-'} · {it['item']}"
+                                   + (f" — {it['reason']}" if it['reason'] else "") for it in _rat))
+            else:
+                st.caption("해당 장면 표시 없음.")
+
 
 def full_plan() -> str:
     """3막 플랜 합침."""
@@ -866,6 +1034,8 @@ _BACKUP_KEYS = [
     "scene_list_handoff", "creator_json_loaded", "use_scene_list_mode",
     "genre_custom",
     "seq_done", "seq_history", "scene_history", "locked_scenes",
+    # ★ v4.1.0 — Market Lens VN (추가만 — 구버전 백업은 이 키가 없어도 그대로 복구)
+    "market_lens", "reality_corrections", "non_korean_speakers_raw", "local_verify",
 ]
 
 
@@ -1886,6 +2056,14 @@ with st.expander("⚡ Creator Engine JSON 업로드 (자동 채우기)", expande
             for _k in ("seq_done", "seq_history", "scene_history"):
                 st.session_state[_k] = {}
             st.session_state["locked_scenes"] = []
+
+            # ★ v4.1.0 — 시장 렌즈 · 사실성 정정 (extract_from_creator_json이 이미 읽음)
+            st.session_state["market_lens"] = loaded.get("market_lens", {}) or {}
+            st.session_state["reality_corrections"] = loaded.get("reality_corrections", []) or []
+            st.session_state["non_korean_speakers_raw"] = ", ".join(loaded.get("non_korean_speakers", []) or [])
+            st.session_state["local_verify"] = {}
+            _ml_label = market_codes_label(st.session_state["market_lens"]) or "렌즈 없음 (한국 기준 규칙 그대로)"
+            _rc_n = len(st.session_state["reality_corrections"])
             
             # 엔진 버전 표시
             meta = creator_data.get("_meta", {})
@@ -1945,6 +2123,8 @@ with st.expander("⚡ Creator Engine JSON 업로드 (자동 채우기)", expande
                 f"**사전 방지 (v3.7.1)**: {v26_msg}\n\n"
                 f"**씬리스트 (v4.0.0)**: "
                 f"{SLW.handoff_summary(_slh_new) if (SLW and _slh_new.get('available')) else '씬리스트 없음 — ' + _slh_new.get('reason', '')}\n\n"
+                f"**시장 렌즈 (v4.1.0)**: {_ml_label}\n\n"
+                f"**사실성 정정 (v4.1.0)**: {_rc_n}건\n\n"
                 f"**로드된 필드**: 11칸 + v3.1 신규 3칸 + v3.6.0 본질 + v3.7.1 사전 방지 4종"
             )
             st.rerun()
@@ -2287,6 +2467,29 @@ has_material = any(st.session_state[f].strip() for f in FIELDS)
 # ★ v4.0.0 — 집필 모드 판정 (W1)
 # 씬리스트가 있으면 시퀀스 집필, 없으면 기존 15비트 집필.
 # ═══════════════════════════════════════════════════════════
+# ★ v4.1.0 — 시장 렌즈 상시 표시 + 한국어 미구사 인물 확정 칸 (VN 작품만)
+_ML_NOW = st.session_state.get("market_lens") or {}
+_ML_VN = market_lens_has_vn(_ML_NOW)
+if _ML_NOW.get("primary"):
+    st.markdown(
+        f'<div class="callout"><div class="cl">MARKET LENS</div>'
+        f'시장 코드 {market_codes_label(_ML_NOW)}'
+        f'{" — 베트남 규칙 작동 (A39 대사 언어 표기 · 직업/시대 팩 적용 범위 · 현지 고증 체크리스트)" if _ML_VN else " — 한국 기준 규칙 그대로"}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+if _ML_VN:
+    st.text_input(
+        "한국어를 구사하지 못하는 인물 (쉼표 구분 · 언어 표기 점검 대상)",
+        key="non_korean_speakers_raw",
+        help="캐릭터 바이블 서술문으로 후보를 자동 제안합니다. 확정은 작가가 합니다. "
+             "AI 집필은 이 칸이 아니라 바이블 원문으로 판단하며, 이 칸은 사후 점검에만 쓰입니다.",
+    )
+if st.session_state.get("reality_corrections"):
+    _rc_all = st.session_state["reality_corrections"]
+    _rc_ap = sum(1 for x in _rc_all if x.get("status") == "applied")
+    st.caption(f"사실성 정정 수신 — 반영 확정 {_rc_ap}건 · 작가 미결정 {len(_rc_all) - _rc_ap}건 (모든 집필에 주입)")
+
 _SLH_NOW = st.session_state.get("scene_list_handoff") or {}
 _SL_AVAILABLE = bool(SLW is not None and _SLH_NOW.get("available"))
 if _SL_AVAILABLE:
@@ -2598,6 +2801,9 @@ if plan_ready() and not _SL_MODE:
                     confined_space=st.session_state.get("confined_space", False),
                     venue_hints=_get_venue_hints(),
                     full_text_so_far=_full_text_so_far(),
+                    # ★ v4.1.0 — 시장 렌즈 · 사실성 정정
+                    market_lens=st.session_state.get("market_lens", {}),
+                    reality_corrections=st.session_state.get("reality_corrections", []),
                 )
                 
                 st.markdown(
@@ -2605,6 +2811,7 @@ if plan_ready() and not _SL_MODE:
                     unsafe_allow_html=True,
                 )
                 result = st.write_stream(stream_ai(prompt, tokens=16000))
+                _capture_local_verify(result, f"Beat {b_no}")  # ★ v4.1.0
                 # INTERNAL 메모(소품 상태/GENRE_*_CHECK) 자동 제거
                 result = _strip_prop_state_memos(result)
                 st.session_state["beats_done"][b_no] = result
@@ -2681,9 +2888,15 @@ if plan_ready() and not _SL_MODE:
             confined_space=st.session_state.get("confined_space", False),
             venue_hints=_get_venue_hints(),
             full_text_so_far=_full_text_so_far(),
+            # ★ v4.1.0 — 시장 렌즈 · 사실성 정정
+            market_lens=st.session_state.get("market_lens", {}),
+            reality_corrections=st.session_state.get("reality_corrections", []),
         )
         st.markdown(f'<div class="beat-tag">Beat {cur} 집필 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=16000))
+        # ★ v4.1.0 — 현지 고증 블록만 떼어 낸다 (소품 상태 등 기존 메모는 다음 비트 참조용으로 유지)
+        _capture_local_verify(result, f"Beat {cur}")
+        result = strip_local_verify(result)
         st.session_state["beats_done"][cur] = result
         st.session_state["current_beat"] = cur + 1
         st.rerun()
@@ -2740,9 +2953,13 @@ if plan_ready() and not _SL_MODE:
             confined_space=st.session_state.get("confined_space", False),
             venue_hints=_get_venue_hints(),
             full_text_so_far=_full_text_so_far(),
+            # ★ v4.1.0 — 시장 렌즈 · 사실성 정정
+            market_lens=st.session_state.get("market_lens", {}),
+            reality_corrections=st.session_state.get("reality_corrections", []),
         )
         st.markdown(f'<div class="beat-tag">Beat {last_beat} 다시 쓰는 중…</div>', unsafe_allow_html=True)
         result = st.write_stream(stream_ai(prompt, tokens=16000))
+        _capture_local_verify(result, f"Beat {last_beat}")  # ★ v4.1.0
         result = _strip_prop_state_memos(result)
         st.session_state["beats_done"][last_beat] = result
         st.success(f"✅ Beat {last_beat} 재집필 완료. 마음에 들지 않으면 비트 영역에서 ↩️ 되돌리기 가능.")
@@ -2803,6 +3020,9 @@ def _run_violation_fix(b_no: int, instruction: str,
         confined_space=st.session_state.get("confined_space", False),
         venue_hints=_get_venue_hints(),
         full_text_so_far=_full_text_so_far(),
+        # ★ v4.1.0 — 시장 렌즈 · 사실성 정정
+        market_lens=st.session_state.get("market_lens", {}),
+        reality_corrections=st.session_state.get("reality_corrections", []),
     )
 
     st.markdown(
@@ -2810,6 +3030,7 @@ def _run_violation_fix(b_no: int, instruction: str,
         unsafe_allow_html=True,
     )
     _result = st.write_stream(stream_ai(_prompt, tokens=16000))
+    _capture_local_verify(_result, f"Beat {b_no}")  # ★ v4.1.0
     _result = _strip_prop_state_memos(_result)
     st.session_state["beats_done"][b_no] = _result
     st.session_state["ss_report_stale"] = True
@@ -3078,6 +3299,11 @@ if st.session_state.get("beats_done") and not _SL_MODE:
         unsafe_allow_html=True,
     )
 
+    # ★ v4.1.0 — 시장 렌즈 점검 · 현지 고증 체크리스트
+    _render_market_panel("\n\n".join(
+        _strip_prop_state_memos(str(st.session_state["beats_done"][_bk]))
+        for _bk in sorted(st.session_state["beats_done"].keys())))
+
     # TXT
     parts = []
     for b_no in sorted(st.session_state["beats_done"].keys()):
@@ -3245,9 +3471,13 @@ def _sl_write_sequence(seq_no: int, instruction: str = "") -> None:
         antagonist_actions=st.session_state.get("antagonist_actions", ""),
         locked_scene_texts=locked_texts,
         user_instruction=instruction,
+        # ★ v4.1.0 — 시장 렌즈 · 사실성 정정
+        market_lens=st.session_state.get("market_lens", {}),
+        reality_corrections=st.session_state.get("reality_corrections", []),
     )
     st.markdown(f'<div class="beat-tag">시퀀스 {seq_no} 집필 중…</div>', unsafe_allow_html=True)
     result = st.write_stream(stream_ai(prompt, tokens=SEQ_WRITE_TOKENS))
+    _capture_local_verify(result, f"시퀀스 {seq_no}")  # ★ v4.1.0
     result = _sl_clean(result)
     for n, t in locked_texts.items():
         if SLW.get_scene_text(result, n):
@@ -3274,6 +3504,9 @@ def _sl_rewrite_scene(seq_no: int, scene_no: int, instruction: str) -> None:
         historical_type=st.session_state.get("historical_type", "팩션"),
         genre_essence=_sl_essence(),
         user_instruction=instruction,
+        # ★ v4.1.0 — 시장 렌즈 · 사실성 정정
+        market_lens=st.session_state.get("market_lens", {}),
+        reality_corrections=st.session_state.get("reality_corrections", []),
     )
     st.markdown(f'<div class="beat-tag">S#{scene_no} 다시 쓰는 중…</div>', unsafe_allow_html=True)
     result = _sl_clean(st.write_stream(stream_ai(prompt, tokens=8000)))
@@ -3472,6 +3705,11 @@ if _SL_MODE:
             '전 시퀀스 집필 완료. 각 시퀀스의 검증 결과를 확인하고 씬 단위로 손보세요.</div>',
             unsafe_allow_html=True,
         )
+
+    # ★ v4.1.0 — 시장 렌즈 점검 · 현지 고증 체크리스트
+    if _done:
+        _sl_names = sorted({SLW.normalize_name(c) for _s in _h.get("scenes", []) for c in _s.get("characters", [])})
+        _render_market_panel(_sl_all_text(with_headers=False), extra_names=_sl_names)
 
     # ── 다운로드 ──
     if _done:

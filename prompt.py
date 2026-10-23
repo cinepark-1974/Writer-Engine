@@ -1,7 +1,43 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v4.0.1
-# prompt.py — Full Version (Creator Engine v2.8.2 동기화)
+# BLUE JEANS SCREENPLAY WRITER ENGINE v4.1.0
+# prompt.py — Full Version (Creator Engine v2.9.1 동기화)
 # © 2026 BLUE JEANS PICTURES
+#
+# v4.1.0 주요 변경사항 (2026-10-23) — Market Lens VN (베트남 시장 집필 정합)
+# - 근거: Creator Engine v2.9.1 「Writer Engine 업그레이드 요청서 — Market Lens VN」(2026-10-23).
+#   Idea Engine v2.3.5 → Creator v2.9.1까지 도달한 베트남 시장 렌즈가 Writer에서 끊겨,
+#   베트남 무대·베트남 인물 원고가 한국 기준 규칙으로 쓰이던 결함 5건을 막는다.
+# - 원칙: W-2·W-4~W-8은 market_lens에 VN(1차 또는 2차)이 있을 때만 작동한다.
+#   렌즈 없음·KR·JP·ID 작품은 v4.0.1과 프롬프트가 한 글자도 같다 (93개 조합 대조 확인).
+# - W-1 market_lens 수신 — extract_market_lens() / normalize_market_lens_for_writer().
+#   읽는 순서: writer_handoff_v28.market_lens → project.market_lens → seed_full 메타.
+#   ※ 실제 Creator v2.9.1 코드는 writer_handoff_v28에 market_lens를 넣지 않고
+#     project.market_lens에만 저장한다(코드 대조 확인). 두 위치 모두 읽으므로 양쪽 다 동작.
+#   시장 판단은 primary/secondary 코드로만. target_market 자유 서술은 파싱하지 않는다.
+# - W-3 사실성 정정 — extract_reality_corrections(). writer_handoff_v28.reality_corrections,
+#   없으면 Creator v2.9.0+ JSON의 reality_gate.issues('무시' 제외). v2.8.x 이하는 건너뜀.
+#   applied = 강제(쓰지 말 표현 등장 시 실패), pending = 기존 설정 유지·확장 금지.
+#   VN과 무관하게 정정 데이터가 있는 모든 작품에 작동한다.
+# - W-2 A39 대사 언어 표기 신설 (Creator 권장안 채택 — Mr. MOON C-1 결정 사항):
+#   한국어 번역 대사 + (베트남어) 패러렌티컬, 대사 블록마다 표기, 원어 병기·로마자 금지,
+#   구사 못 하는 언어로 말하지 않는다(바이블 근거) — 장벽을 장면 재료로, 화면 텍스트에도 언어 표기,
+#   자막 지시 금지. A39는 SYSTEM_PROMPT가 아니라 VN 작품의 집필 프롬프트에만 주입한다.
+# - W-4 직업 팩·시대 팩 적용 범위 — 코드로 끄지 않고 블록 상단에 범위 선언
+#   (scope_pack_block_for_market). 한국군 파병 같은 정당한 한국 장면을 보호한다.
+# - W-5 HORROR 무속 대체 금지 / PERIOD 영화법 제9조 점검 표시(원고 수정 없음).
+# - W-6 현지 고증 항목은 원고 밖 <LOCAL_VERIFY> 블록 → extract_local_verify()로 모으고
+#   strip_local_verify()로 제거. 본문 '(고증 필요)' 메모 금지.
+# - W-7 예상 등급이 있으면 <RATING_CHECK>로 7기준 해당 장면 표시만. 수위 자동 조정 없음.
+# - W-8 베트남 인명·지명 — 국립국어원 베트남어 표기(2004년 고시, 된소리 표기) + 첫 표기 고정.
+# - 파이썬 사후 점검 run_market_checks(): 언어 표기 누락·원어 병기·한국 무속 어휘·
+#   한국 제도 어휘·이표기·정정 표현. 표시만 하고 자동 수정하지 않는다.
+# - 집필 함수 4종(build_write_beat_prompt / build_targeted_rewrite_prompt /
+#   build_write_sequence_prompt / build_rewrite_scene_prompt)에 디폴트 인자
+#   market_lens=None, reality_corrections=None 추가만. 기존 시그니처 불변.
+# - extract_from_creator_json() 반환에 market_lens / reality_corrections /
+#   non_korean_speakers 키 추가 (기존 키 값 불변).
+#
+# ─────────────────────────────────────────────────────────────
 #
 # v4.0.1 주요 변경사항 (2026-10-01) — 코미디 결합 장르 수정
 # - Mr. MOON 진단: "부활은 코믹 액션이다. 장르 직접 입력이 안 된다. 수정이 반드시 필요."
@@ -719,8 +755,8 @@
 # - Creator JSON 자동 로더
 # ─────────────────────────────────────────────────────────────
 
-ENGINE_VERSION = "v4.0.1"
-ENGINE_BUILD_DATE = "2026-10-01"
+ENGINE_VERSION = "v4.1.0"
+ENGINE_BUILD_DATE = "2026-10-23"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1395,9 +1431,18 @@ def extract_from_creator_json(creator_json: dict) -> dict:
     ]}
     # ★ v3.7.1 — 비트 번호별 v2.6.0 데이터 (집필 시 해당 비트만 주입)
     result["beat_v26_data"] = {}
-    
+    # ★ v4.1.0 — Creator v2.9.1 시장 렌즈(W-1) · 사실성 정정(W-3) · 한국어 미구사 인물 후보(W-2)
+    result["market_lens"] = {}
+    result["reality_corrections"] = []
+    result["non_korean_speakers"] = []
+
     if not creator_json:
         return result
+
+    result["market_lens"] = extract_market_lens(creator_json)
+    result["reality_corrections"] = extract_reality_corrections(creator_json)
+    if market_lens_has_vn(result["market_lens"]):
+        result["non_korean_speakers"] = suggest_non_korean_speakers(creator_json)
     
     p = creator_json.get("project", creator_json)
     result["title"] = p.get("title", "")
@@ -8194,6 +8239,9 @@ def build_write_beat_prompt(
     confined_space: bool = False,     # ★ v3.9.0 — 한정 공간 작품 수동 지정
     venue_hints: list = None,         # ★ v3.9.0 — 작가 지정 권역 목록
     full_text_so_far: str = "",       # ★ v3.9.0 — 지금까지 집필된 전체 원고
+    # ★ v4.1.0 신규 — Creator v2.9.1 시장 렌즈 · 사실성 정정 (기본값이면 v4.0.1과 동일)
+    market_lens: dict = None,
+    reality_corrections: list = None,
 ) -> str:
     gr = _genre_text(genre)
     genre_override = get_genre_override(genre)
@@ -8364,6 +8412,10 @@ def build_write_beat_prompt(
         + "\n" + (story_elements or "")
     )
     period_block_text = build_period_block_for_writer(period_scan, max_periods=2)
+
+    # ★ v4.1.0 W-4 — VN 작품이면 직업·시대 팩 상단에 적용 범위 선언 (VN 아니면 원문 그대로)
+    profession_block_text = scope_pack_block_for_market(profession_block_text, market_lens, "profession")
+    period_block_text = scope_pack_block_for_market(period_block_text, market_lens, "period")
 
     # ★ v3.1.4 신규 블록 — INSERT 시스템 (화면 텍스트 표기 강제)
     # 카톡·문자·이메일·유튜브·뉴스 등 화면 안 텍스트를 표준 표기로 강제.
@@ -8729,7 +8781,7 @@ AI가 자주 저지르는 엔딩 실수:
   Beat 1~14의 모든 작업이 무의미해진다.
 """
 
-    return f"""
+    _base_prompt = f"""
 [TASK] Beat {beat_number} 시나리오 집필 — {beat_info.get('name', '')} ({beat_info.get('act', '')})
 {beat_info.get('desc', '')}
 
@@ -9093,6 +9145,9 @@ S#1. INT. 카페 — 낮
 
 ★ 위 두 블록을 엄격히 분리하라. BLOCK 1 중간에 메타 설명이 섞이면 실패.
 """.strip()
+    # ★ v4.1.0 — 시장 렌즈 VN(A39·W-4~W-8) · 사실성 정정(W-3). 데이터 없으면 원문 그대로.
+    return append_market_blocks(_base_prompt, market_lens, reality_corrections,
+                                genre=genre, historical=historical)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -9175,6 +9230,9 @@ def build_targeted_rewrite_prompt(
     confined_space: bool = False,
     venue_hints: list = None,
     full_text_so_far: str = "",
+    # ★ v4.1.0 신규 — 시장 렌즈 · 사실성 정정 (기본값이면 v4.0.1과 동일)
+    market_lens: dict = None,
+    reality_corrections: list = None,
 ) -> str:
     """
     특정 비트를 재집필한다 — Rewrite/Revise 전 작가가 손보는 단계.
@@ -9369,7 +9427,7 @@ def build_targeted_rewrite_prompt(
         full_text_so_far=full_text_so_far,
     )
 
-    return f"""
+    _base_prompt = f"""
 [TASK] Beat {beat_number} 재집필 — {beat_info.get('name', '')} ({beat_info.get('act', '')})
 {beat_info.get('desc', '')}
 
@@ -9444,6 +9502,9 @@ def build_targeted_rewrite_prompt(
 한국 시나리오 표준 포맷 (지문↔대사 사이 빈 줄).
 INTERNAL 메모(소품 상태/GENRE_BOOSTER_CHECK 등)도 평소대로 작성.
 """.strip()
+    # ★ v4.1.0 — 시장 렌즈 VN · 사실성 정정. 데이터 없으면 원문 그대로.
+    return append_market_blocks(_base_prompt, market_lens, reality_corrections,
+                                genre=genre, historical=historical)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -9644,6 +9705,9 @@ def build_write_sequence_prompt(
     antagonist_actions: str = "",
     locked_scene_texts: dict = None,
     user_instruction: str = "",
+    # ★ v4.1.0 신규 — 시장 렌즈 · 사실성 정정 (기본값이면 v4.0.1과 동일)
+    market_lens: dict = None,
+    reality_corrections: list = None,
 ) -> str:
     """★ v4.0.0 — 시퀀스 1회 집필 프롬프트 (W2).
 
@@ -9689,6 +9753,9 @@ def build_write_sequence_prompt(
     period_block_text = build_period_block_for_writer(
         (world or "") + "\n" + (logline or "") + "\n" + (treatment or "")[:4000]
         + "\n" + (story_elements or ""), max_periods=2)
+    # ★ v4.1.0 W-4 — VN 작품이면 직업·시대 팩 상단에 적용 범위 선언 (VN 아니면 원문 그대로)
+    profession_block_text = scope_pack_block_for_market(profession_block_text, market_lens, "profession")
+    period_block_text = scope_pack_block_for_market(period_block_text, market_lens, "period")
     insert_system_block = get_insert_system_module()
     prop_continuity_block = get_prop_continuity_module()
     arthouse_scan = ((genre or "") + "\n" + (logline or "") + "\n" + (world or "")
@@ -9764,7 +9831,7 @@ def build_write_sequence_prompt(
     first_no = scenes[0].get("no") if scenes else "?"
     last_no = scenes[-1].get("no") if scenes else "?"
 
-    return f"""
+    _base_prompt = f"""
 [TASK] {seq_head} 집필 — 씬리스트 모드 (S#{first_no} ~ S#{last_no}, {len(scenes)}씬)
 시퀀스 목표: {q.get('goal', '')}
 
@@ -9874,6 +9941,9 @@ def build_write_sequence_prompt(
 - 장르 드라이브: 이 시퀀스에서 작동한 장르 장치
 <WRITER_NOTES_END>
 """.strip()
+    # ★ v4.1.0 — 시장 렌즈 VN · 사실성 정정. 데이터 없으면 원문 그대로.
+    return append_market_blocks(_base_prompt, market_lens, reality_corrections,
+                                genre=genre, historical=historical)
 
 
 def build_rewrite_scene_prompt(
@@ -9892,6 +9962,9 @@ def build_rewrite_scene_prompt(
     historical_type: str = "",
     genre_essence: dict = None,
     user_instruction: str = "",
+    # ★ v4.1.0 신규 — 시장 렌즈 · 사실성 정정 (기본값이면 v4.0.1과 동일)
+    market_lens: dict = None,
+    reality_corrections: list = None,
 ) -> str:
     """★ v4.0.0 — 씬 1개 재집필 프롬프트 (W6).
     씬리스트 고정(A36)·대사 방식(A37)·말투표(A38)를 그대로 적용한다."""
@@ -9909,7 +9982,7 @@ def build_rewrite_scene_prompt(
     prev_block = f"[직전 씬 — 전문]\n{prev_scene_text.strip()[:3000]}" if prev_scene_text.strip() else ""
     next_block = f"[직후 씬 — 전문. 이 씬으로 이어지게 끝내라]\n{next_scene_text.strip()[:2000]}" if next_scene_text.strip() else ""
 
-    return f"""
+    _base_prompt = f"""
 [TASK] S#{scene_no} 한 씬만 다시 쓰기 — 씬리스트 모드
 
 [작가 수정 지시 — 최우선. 단, 씬리스트 고정(A36)은 깨지 않는다]
@@ -9963,3 +10036,693 @@ def build_rewrite_scene_prompt(
 [OUTPUT FORMAT]
 ★ S#{scene_no} 한 씬만 출력한다. 첫 줄은 씬 헤딩. 다른 씬·설명·메모를 쓰지 마라.
 """.strip()
+    # ★ v4.1.0 — 씬 한 개 재집필은 메모 출력 금지 → <LOCAL_VERIFY> 출력 지시 없이 규칙만 붙인다.
+    return append_market_blocks(_base_prompt, market_lens, reality_corrections,
+                                genre=genre, historical=historical, with_output_blocks=False)
+
+
+
+# ═══════════════════════════════════════════════════════════
+# ★ v4.1.0 신규 — MARKET LENS VN (Creator v2.9.1 인계 정합)
+#
+# 원칙
+# 1) 시장 판단은 market_lens.primary / secondary 코드로만 한다.
+#    target_market 자유 서술은 부분 문자열로 파싱하지 않는다.
+#    ("베트남 + 한국 공동제작"이 "한국"으로 축소되던 Creator v2.9.0 결함과 같은 구조 차단)
+# 2) W-2·W-4~W-8은 VN이 1차 또는 2차일 때만 작동한다. 그 외 작품은 v4.0.1과 같은 프롬프트.
+# 3) W-3 사실성 정정은 시장과 무관하게, 정정 데이터가 있는 모든 작품에 작동한다.
+# 4) 파이썬 점검은 표시만 한다. 원고를 자동으로 고치지 않는다 — 수정은 작가의 몫.
+# 5) 시장 렌즈는 참고 정보다. 씬리스트·바이블·결말을 바꾸는 근거가 아니다.
+# ═══════════════════════════════════════════════════════════
+
+import re
+import json
+
+MARKET_CODES = ("KR", "JP", "ID", "VN")
+MARKET_CODE_LABELS = {"KR": "한국", "JP": "일본", "ID": "인도네시아", "VN": "베트남"}
+
+# 시행규칙 05/2023의 평가 기준 7가지 (Creator v2.9.1 VN_RATING_CRITERIA와 동일 표기)
+VN_RATING_CRITERIA = ["주제", "폭력", "노출·성", "마약", "공포", "언어", "위험 모방 행동"]
+
+MARKET_LENS_BEGIN = "[MARKET_LENS_BEGIN]"
+MARKET_LENS_END = "[MARKET_LENS_END]"
+
+
+def _ml_code(v) -> str:
+    s = str(v or "").strip().upper()
+    return s if s in MARKET_CODES else ""
+
+
+def _ml_str_list(x) -> list:
+    if not isinstance(x, list):
+        return []
+    return [str(i).strip() for i in x if str(i or "").strip()]
+
+
+def normalize_market_lens_for_writer(raw) -> dict:
+    """market_lens 원본 → Writer가 쓰는 필드만 남긴 정규화본.
+    형식이 깨져 있거나 primary 코드가 없으면 빈 dict(= 렌즈 없음)."""
+    if not isinstance(raw, dict) or not raw:
+        return {}
+    primary = _ml_code(raw.get("primary"))
+    if not primary:
+        return {}
+    secondary = _ml_code(raw.get("secondary"))
+    if secondary == primary:
+        secondary = ""
+    ve = raw.get("vn_evaluation") if isinstance(raw.get("vn_evaluation"), dict) else {}
+    sources = []
+    for s in (raw.get("sources") or []) if isinstance(raw.get("sources"), list) else []:
+        if isinstance(s, dict):
+            sources.append({"id": str(s.get("id", "") or ""), "name": str(s.get("name", "") or ""),
+                            "as_of": str(s.get("as_of", "") or ""), "url": str(s.get("url", "") or "")})
+    return {
+        "primary": primary,
+        "secondary": secondary,
+        "lens_data_as_of": str(raw.get("lens_data_as_of", "") or ""),
+        "expected_rating": str(ve.get("expected_rating", "") or "").strip(),
+        "localization_conditions": _ml_str_list(ve.get("localization_conditions")),
+        "verification_required": _ml_str_list(ve.get("verification_required")),
+        "sources": sources,
+    }
+
+
+def _ml_project(creator_json: dict) -> dict:
+    if not isinstance(creator_json, dict):
+        return {}
+    p = creator_json.get("project")
+    return p if isinstance(p, dict) else creator_json
+
+
+def extract_market_lens(creator_json: dict) -> dict:
+    """W-1 — 읽는 순서: project.writer_handoff_v28.market_lens → project.market_lens
+    → project.seed_full._idea_engine_meta.market_lens(Creator get_market_lens와 같은 보조 경로) → 없음.
+    빈 객체 {}이거나 형식이 깨져 있으면 렌즈 없음({})."""
+    p = _ml_project(creator_json)
+    h = p.get("writer_handoff_v28")
+    candidates = [
+        h.get("market_lens") if isinstance(h, dict) else None,
+        p.get("market_lens"),
+    ]
+    sf = p.get("seed_full")
+    if isinstance(sf, dict) and isinstance(sf.get("_idea_engine_meta"), dict):
+        candidates.append(sf["_idea_engine_meta"].get("market_lens"))
+    for c in candidates:
+        lens = normalize_market_lens_for_writer(c)
+        if lens:
+            return lens
+    return {}
+
+
+def market_lens_has_vn(lens: dict) -> bool:
+    return bool(lens) and "VN" in (lens.get("primary"), lens.get("secondary"))
+
+
+def market_codes_label(lens: dict) -> str:
+    """'VN(베트남) 1차 · KR(한국) 2차' 형태. 렌즈 없으면 빈 문자열."""
+    if not lens or not lens.get("primary"):
+        return ""
+    t = f"{lens['primary']}({MARKET_CODE_LABELS.get(lens['primary'], '')}) 1차"
+    if lens.get("secondary"):
+        t += f" · {lens['secondary']}({MARKET_CODE_LABELS.get(lens['secondary'], '')}) 2차"
+    return t
+
+
+def _ver_tuple(v: str) -> tuple:
+    nums = re.findall(r"\d+", str(v or ""))
+    return tuple(int(n) for n in nums[:3]) if nums else (0,)
+
+
+def _rc_terms(x) -> list:
+    if isinstance(x, list):
+        return [str(i).strip() for i in x if str(i or "").strip()]
+    if isinstance(x, str) and x.strip():
+        return [t.strip() for t in re.split(r"[,/\n]", x) if t.strip()]
+    return []
+
+
+def _normalize_rc_item(it: dict) -> dict:
+    return {
+        "id": str(it.get("id", "") or ""),
+        "severity": str(it.get("severity", "") or ""),
+        "status": "applied" if str(it.get("status", "")).strip() == "applied" else "pending",
+        "error": str(it.get("error", "") or ""),
+        "reality": str(it.get("reality", "") or ""),
+        "location": str(it.get("location", "") or ""),
+        "terms": _rc_terms(it.get("terms")),
+        "correct": _rc_terms(it.get("correct")),
+    }
+
+
+def extract_reality_corrections(creator_json: dict) -> list:
+    """W-3 — 사실성 정정 목록.
+    1순위 writer_handoff_v28.reality_corrections (Creator v2.9.0+, 씬리스트 잠금 후).
+    2순위 project.reality_gate.issues — Creator v2.9.0 이상 JSON에서만
+          (Creator reality_corrections()와 같은 규칙: 작가가 '무시'한 항목 제외).
+    Creator v2.8.x 이하는 빈 목록 → W-3 건너뜀."""
+    p = _ml_project(creator_json)
+    h = p.get("writer_handoff_v28")
+    if isinstance(h, dict) and isinstance(h.get("reality_corrections"), list):
+        return [_normalize_rc_item(x) for x in h["reality_corrections"] if isinstance(x, dict)]
+    meta = creator_json.get("_meta", {}) if isinstance(creator_json, dict) else {}
+    if _ver_tuple(meta.get("engine_version", "")) < (2, 9, 0):
+        return []
+    rg = p.get("reality_gate") or {}
+    out = []
+    for iss in (rg.get("issues") or []) if isinstance(rg, dict) else []:
+        if not isinstance(iss, dict) or iss.get("status") == "ignored":
+            continue
+        out.append(_normalize_rc_item({
+            "id": f"RG-{iss.get('id', '')}", "severity": iss.get("severity", ""),
+            "status": iss.get("status", "pending"), "error": iss.get("error", ""),
+            "reality": iss.get("reality", ""), "location": iss.get("location", ""),
+            "terms": iss.get("error_terms"), "correct": iss.get("correct_terms"),
+        }))
+    return out
+
+
+# ───────────────────────────────────────────────────────────
+# 캐릭터 바이블 → 한국어 미구사 인물 후보 (W-2 파이썬 점검 대상)
+# Creator v2.9.2에서 languages 필드가 생기면 그 값을 우선 사용한다.
+# 그 전까지는 바이블 서술문으로 '후보'만 제안하고, 확정은 작가가 화면에서 한다.
+# ───────────────────────────────────────────────────────────
+
+_KO_SPEAK_RE = re.compile(r"한국어\s*(?:를|을)?\s*(?:구사|유창|능숙|잘\s*한|할\s*줄|모국어|원어민)|한국어\s*(?:가능|능통)|모국어\s*[:：]?\s*한국어")
+_KO_NO_RE = re.compile(r"한국어\s*(?:를|을)?\s*(?:못|모른|모름|서툴|하지\s*못|배운\s*적\s*없|전혀)")
+
+
+def _bible_characters(creator_json: dict) -> list:
+    p = _ml_project(creator_json)
+    cb = p.get("char_bible") or {}
+    chars = []
+    if isinstance(cb, dict) and isinstance(cb.get("characters"), list):
+        chars = [c for c in cb["characters"] if isinstance(c, dict)]
+    elif isinstance(cb, dict):
+        for name, v in cb.items():
+            if isinstance(v, dict):
+                chars.append(dict(v, name=v.get("name") or name))
+    return chars
+
+
+def suggest_non_korean_speakers(creator_json: dict) -> list:
+    """한국어를 구사하지 못하는 인물 후보. 표시·점검용이며 프롬프트 판정 근거는 바이블 원문이다."""
+    out = []
+    for c in _bible_characters(creator_json):
+        name = str(c.get("name", "") or "").strip()
+        if not name:
+            continue
+        langs = c.get("languages")
+        if isinstance(langs, list) and langs:
+            ko = [l for l in langs if isinstance(l, dict) and "한국" in str(l.get("language", l.get("lang", "")))]
+            if not ko:
+                out.append(name)
+            continue
+        text = json.dumps(c, ensure_ascii=False)
+        if _KO_NO_RE.search(text):
+            out.append(name)
+        elif "베트남" in text and not _KO_SPEAK_RE.search(text) and not re.search(r"한국인|한국 국적|교민|유학생", text):
+            out.append(name)
+    return out
+
+
+# ───────────────────────────────────────────────────────────
+# 룰 본문 — A39 (W-2)
+# ───────────────────────────────────────────────────────────
+
+A39_DIALOGUE_LANGUAGE_RULE = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+A39. 대사 언어 표기 — Dialogue Language Tag (시장 렌즈 VN 작품 전용)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+이 작품에는 한국어로 말하지 않는 인물이 나온다.
+원고는 전부 한국어로 쓰고, 그 말이 어떤 언어인지는 표기로 알린다.
+외국어 버전은 Translator Engine의 몫이다. 너는 원어 문장을 만들지 않는다.
+
+[규칙]
+a. 모든 대사는 한국어로 쓴다. 베트남어 대사도 한국어 번역문으로 쓴다. 원어 문장을 병기하지 마라.
+b. 한국어가 아닌 대사는 대사 앞 패러렌티컬에 언어를 적는다.
+     린		(베트남어) 문 닫을 시간이에요.
+   다른 지시와 겹치면 한 괄호에 쉼표로 묶는다.
+     린		(베트남어, 작게) 문 닫을 시간이에요.
+   대사 블록마다 붙인다. 씬 머리에 한 번만 적는 일괄 표기는 쓰지 않는다.
+   한국어 대사에는 표기를 붙이지 않는다. 영어도 같은 방식이다 — (영어).
+c. 원어 음차는 짧은 호칭·인사·감탄 한 단어만 한글로 허용한다.
+   문장 단위 음차, 로마자·베트남 문자(성조 부호 포함) 표기는 금지다.
+d. 인물은 구사하지 못하는 언어로 말하지 않는다. 근거는 캐릭터 바이블이다.
+   바이블에 그 언어를 할 줄 안다는 근거가 없으면 두 사람 사이에 다리가 필요하다 —
+   통역하는 제3자, 서툰 영어, 번역 앱, 손짓.
+   이 장벽을 장면 재료로 써라. 말이 안 통해 생기는 오해·지연·고립이
+   공포에서는 고립의 압력이 되고, 로맨스에서는 거리를 좁히는 사건이 된다.
+e. 화면 텍스트에도 언어를 적는다 (INSERT 규칙 확장). 본문은 한국어 번역문.
+     [문자 · 베트남어] '오늘 밤 돌아오지 마.'
+     INSERT — 핸드폰 문자 화면 · 베트남어
+f. 자막 지시 문구(SUBTITLE:, 자막 처리 등)는 쓰지 않는다. 언어 표기가 곧 자막 대상 표시다.
+
+❌ BAD — 원어 병기 + 근거 없는 유창한 한국어
+S#7. INT. 하숙집 부엌 — 밤
+
+민수		이 집에 언제부터 살았어요?
+린		Tôi sống ở đây ba năm. 3년 됐어요. 오빠는 한국에서 왔죠?
+
+✅ GOOD — 한국어 번역 + 언어 표기 + 장벽을 장면으로
+S#7. INT. 하숙집 부엌 — 밤
+
+민수		이 집에 언제부터 살았어요?
+
+린이 고개를 젓는다. 휴대폰 번역 앱을 켜서 민수 앞에 내민다.
+
+린		(베트남어) 여기 대고 다시 말해요.
+
+민수가 휴대폰에 입을 가까이 댄다. 그 순간 2층에서 문 닫히는 소리.
+린이 휴대폰을 거둔다.
+
+출력 후 파이썬이 한국어 미구사 인물의 대사 중 언어 표기가 없는 줄과
+베트남 문자가 섞인 줄을 센다. 자동으로 고치지 않는다 — 수정은 작가가 한다.
+""".strip()
+
+
+# ───────────────────────────────────────────────────────────
+# 블록 빌더 — W-3 · W-4 · W-5 · W-6 · W-7 · W-8
+# ───────────────────────────────────────────────────────────
+
+VN_SCOPE_PROFESSION_PREFIX = (
+    "[★ 적용 범위 — 시장 렌즈 VN (v4.1.0 W-4)]\n"
+    "아래 직업 팩은 한국 제도 안에서 일하는 인물에게만 적용한다.\n"
+    "베트남 공안·법원·행정 소속 인물에는 적용하지 않고, 그들의 직급 호칭과 절차를 단정하지 않는다.\n"
+    "베트남에 있는 한국인(주재원·유학생·교민)은 한국 쪽 직업 현실을 그대로 쓴다.\n"
+)
+VN_SCOPE_PERIOD_PREFIX = (
+    "[★ 적용 범위 — 시장 렌즈 VN (v4.1.0 W-4)]\n"
+    "아래 시대 팩은 무대가 한국인 시대 장면에만 적용한다.\n"
+    "무대가 베트남인 근현대사·전쟁사 장면에는 한국 시대 OVERRIDE를 적용하지 않는다.\n"
+)
+
+
+def scope_pack_block_for_market(block_text: str, lens: dict, kind: str) -> str:
+    """W-4 — VN 작품이면 직업·시대 팩 블록 상단에 적용 범위 선언을 붙인다.
+    팩을 코드로 끄지 않는다(한국군 파병 장면 등 정당한 한국 장면 보호). VN이 아니면 원문 그대로."""
+    if not block_text or not str(block_text).strip() or not market_lens_has_vn(lens):
+        return block_text
+    prefix = VN_SCOPE_PROFESSION_PREFIX if kind == "profession" else VN_SCOPE_PERIOD_PREFIX
+    return "\n" + prefix + block_text
+
+
+def build_reality_corrections_block_for_writer(rc: list) -> str:
+    """W-3 — applied = 강제(쓰지 말 표현이 원고에 나오면 실패), pending = 기존 설정 유지·확장 금지."""
+    if not rc:
+        return ""
+    applied = [x for x in rc if x.get("status") == "applied"]
+    pending = [x for x in rc if x.get("status") != "applied"]
+
+    def _line(x):
+        t = f" / 쓰지 말 표현: {', '.join(x['terms'])}" if x.get("terms") else ""
+        c = f" / 대신: {', '.join(x['correct'])}" if x.get("correct") else ""
+        sev = f" [{x['severity']}]" if x.get("severity") else ""
+        return f"- {x.get('id', '')}{sev} 오류: {x.get('error', '')} → 실제: {x.get('reality', '')}{t}{c}"
+
+    L = []
+    if applied:
+        L += ["[★ 사실성 정정 — Creator Reality Gate · 작가 반영 확정 · 원고 전 장면 강제 (v4.1.0 W-3) ★]",
+              "아래 전제는 현실과 다르다. 대사·지문·씬 헤딩·INSERT 어디에도 틀린 전제를 다시 쓰지 마라.",
+              "회상 장소·옛 명칭도 같다. '쓰지 말 표현'이 원고에 나오면 실패다 — 출력 후 파이썬이 센다."]
+        L += [_line(x) for x in applied]
+    if pending:
+        L += ["", "[사실성 확인 필요 — Creator Reality Gate · 작가 미결정 (v4.1.0 W-3)]",
+              "작가가 아직 반영·무시를 정하지 않았다. 의도된 설정일 수 있으므로 씬리스트·바이블에 이미 있는 설정은 바꾸지 마라.",
+              "그러나 이 전제를 새 장면·새 디테일·새 대사로 넓히지 마라. 쓰지 말 표현이 있으면 그 표현은 쓰지 않는다."]
+        L += [_line(x) for x in pending]
+    return "\n".join(L).strip()
+
+
+def _ml_is_horror(genre: str) -> bool:
+    g = genre or ""
+    return _is_horror(g) or "미스터리" in g
+
+
+def _ml_is_period(genre: str, historical: bool) -> bool:
+    g = genre or ""
+    return bool(historical) or _is_period(g) or "전쟁" in g
+
+
+def build_market_lens_block_for_writer(lens: dict, genre: str = "", historical: bool = False,
+                                       with_output_blocks: bool = True) -> str:
+    """W-4~W-8 — VN이 1차·2차일 때만. 그 외 빈 문자열(현행 동작 보존).
+    with_output_blocks=False면 <LOCAL_VERIFY>/<RATING_CHECK> 출력 지시를 빼고
+    '확신 없으면 단정하지 말고 행동으로'만 남긴다 (씬 한 개 재집필용)."""
+    if not market_lens_has_vn(lens):
+        return ""
+    as_of = lens.get("lens_data_as_of") or "미기재"
+    L = [MARKET_LENS_BEGIN,
+         "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+         "시장 렌즈 VN — Creator 인계 · 집필 적용 범위 (v4.1.0)",
+         "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+         f"시장 코드: {market_codes_label(lens)}  (렌즈 기준일 {as_of})",
+         "★ 이 블록으로 인물·장소·사건·결말을 바꾸지 마라. 씬리스트·바이블이 우선이다.",
+         "★ 목적은 하나다 — 베트남에서 벌어지는 장면이 베트남처럼 보이게 한다.",
+         "",
+         "[W-4 한국 기준 팩의 적용 범위]",
+         "- 직업 팩은 한국 제도 안에서 일하는 인물에게만 적용한다.",
+         "- 베트남 공안·법원·행정 소속 인물에는 한국 제도 현실을 적용하지 않는다.",
+         "  한국 경찰 계급 호칭(경위·경감 등), 영장실질심사·구속영장·송치 같은 한국 절차 용어를 붙이지 마라.",
+         "  직급·절차를 단정하는 대신 그 인물이 하는 행동으로 권한을 보여줘라.",
+         "- 베트남에 있는 한국인(주재원·유학생·교민)은 한국 쪽 직업 현실을 그대로 쓴다.",
+         "  판정 기준은 '그 인물이 어느 나라 제도 안에서 일하는가'다.",
+         "- 시대 팩은 무대가 한국인 시대 장면에만 적용한다. 무대가 베트남인 근현대사·전쟁사 장면에는",
+         "  한국 시대 OVERRIDE를 적용하지 않는다. 한국 쪽 장면(한국군 파병, 한국 본사, 한국의 가족)은 한국 팩 그대로.",
+         "",
+         "❌ BAD — 베트남 공안에 한국 제도 적용",
+         "투안		정 경위님, 영장실질심사 끝나면 바로 넘기겠습니다.",
+         "",
+         "✅ GOOD — 직급·절차를 단정하지 않고 행동으로",
+         "투안이 서류철을 덮는다. 민수의 여권을 자기 주머니에 넣는다.",
+         "",
+         "투안		(베트남어) 내일 아침까지는 이 도시 못 나가요.",
+         ]
+
+    if _ml_is_horror(genre):
+        L += ["",
+              "[W-5 HORROR — 무속 대체 금지]",
+              "- 베트남 민속 신앙을 한국 무속 장치로 대체하지 않는다. 굿판·방울·신내림·무당·작두·오방기는 쓰지 않는다.",
+              "- 현지 의례로 쓰되, 의례의 구체 절차·명칭은 단정하지 말고 현지 고증 항목으로 넘긴다.",
+              "- 베트남 영화 당국이 과도한 유혈·미신 요소에 신중을 권고했다는 렌즈 자료가 있다.",
+              "  규정이 아닌 권고다. 공포의 강도를 스스로 낮추지 마라.",
+              "",
+              "❌ BAD — 한국 무속으로 대체",
+              "할머니가 마당에 상을 차리고 방울을 흔든다. 굿이 시작된다.",
+              "",
+              "✅ GOOD — 현지 의례로 쓰되 세부는 고증으로 이월",
+              "할머니가 집 안 제단 앞에 향을 꽂는다. 연기가 2층 계단 쪽으로 눕는다."]
+    if _ml_is_period(genre, historical):
+        L += ["",
+              "[W-5 PERIOD — 베트남 영화법 제9조 점검 표시]",
+              "- 무대가 베트남인 역사 장면 중 영화법 제9조(역사 왜곡 등 금지 조항)에 걸릴 수 있는 장면은 표시만 한다.",
+              "- 원고를 스스로 고치거나 순화하지 마라. 판단은 작가와 현지 파트너가 한다."]
+
+    L += ["",
+          "[W-6 현지 고증 — 원고 밖으로]",
+          "- 원고 본문에 '(고증 필요)', '※확인' 같은 메모를 쓰지 마라. 메모가 본문에 섞이면 원고 유출 사고다.",
+          "- 베트남 제도·직급·절차·의례·관습·지명 세부 중 확신이 없는 것은 본문에서 단정하지 말고",
+          "  행동과 이미지로 처리한다."]
+    if with_output_blocks:
+        L += ["- 그 항목들은 출력 맨 끝 <LOCAL_VERIFY> 블록에 '씬 번호 | 항목 | 이유'로 모은다 (출력 형식은 맨 아래)."]
+        if _ml_is_period(genre, historical):
+            L += ["- 영화법 제9조 점검 장면도 <LOCAL_VERIFY>에 항목 '영화법 제9조 점검'으로 적는다."]
+    ver = lens.get("verification_required") or []
+    loc = lens.get("localization_conditions") or []
+    if ver:
+        L += ["", "[확인 필요 — Idea Engine 렌즈 · 원고에서 사실로 단정 금지]"]
+        L += [f"- {x}" for x in ver]
+    if loc:
+        L += ["", "[현지화 조건 — 참고만. 원고를 바꾸는 근거 아님]"]
+        L += [f"- {x}" for x in loc]
+
+    if lens.get("expected_rating"):
+        L += ["",
+              "[W-7 수위 — 표시만]",
+              f"- 예상 등급: {lens['expected_rating']} — Idea Engine의 창작적 판단이며 확정 등급이 아니다.",
+              "- 수위를 스스로 낮추지 마라. 수위 결정은 작가 몫이다."]
+        if with_output_blocks:
+            L += [f"- 출력 맨 끝 <RATING_CHECK> 블록에 7기준({' / '.join(VN_RATING_CRITERIA)}) 중",
+                  "  이번 원고에서 해당하는 장면만 표시한다."]
+
+    L += ["",
+          "[W-8 베트남 인명·지명 한글 표기]",
+          "- 국립국어원 외래어 표기법의 베트남어 표기를 따른다 (2004년 고시). 베트남어 표기는 된소리를 쓴다.",
+          "  예: 호찌민, 냐짱, 후에, 쩐, 응우옌.",
+          "- 씬리스트·캐릭터 바이블에 이미 정해진 이름은 그 표기 그대로 쓴다. 작가가 정한 표기가 우선이다.",
+          "- 같은 인명·지명은 처음 쓴 표기로 고정한다. 씬 헤딩·지문·대사에서 흔들리지 않게.",
+          "  출력 후 파이썬이 이표기를 점검한다."]
+    if lens.get("sources"):
+        src = " / ".join(f"{s['id']} {s['name']}".strip() + (f" ({s['as_of']})" if s.get("as_of") else "")
+                         for s in lens["sources"] if s.get("id") or s.get("name"))
+        if src:
+            L += ["", f"[렌즈 출처] {src}"]
+    L += [MARKET_LENS_END]
+    return "\n".join(L)
+
+
+def build_market_output_addendum(lens: dict, genre: str = "", historical: bool = False) -> str:
+    """W-6·W-7 — 출력 맨 끝 별도 블록 형식. 본문·WRITER_NOTES가 모두 끝난 뒤에만."""
+    if not market_lens_has_vn(lens):
+        return ""
+    L = ["[출력 추가 — 시장 렌즈 VN · 본문과 내부 메모가 모두 끝난 뒤 맨 끝에만]",
+         "아래 블록은 원고가 아니다. 앱이 원고에서 떼어내 '현지 고증 체크리스트'로 따로 보여준다.",
+         "",
+         "<LOCAL_VERIFY>",
+         "- S#번호 | 항목 | 이유",
+         "</LOCAL_VERIFY>",
+         "· 한 줄에 한 항목. 씬 번호는 숫자만 (예: S#12). 해당 항목이 없으면 '- 없음' 한 줄."]
+    if lens.get("expected_rating"):
+        L += ["",
+              "<RATING_CHECK>",
+              "- S#번호 | 기준 | 한 줄 근거",
+              "</RATING_CHECK>",
+              f"· 기준은 {' / '.join(VN_RATING_CRITERIA)} 중 하나. 해당 없으면 '- 해당 없음' 한 줄."]
+    return "\n".join(L)
+
+
+def append_market_blocks(base_prompt: str, market_lens: dict = None, reality_corrections: list = None,
+                         genre: str = "", historical: bool = False,
+                         with_output_blocks: bool = True) -> str:
+    """기존 프롬프트 끝에 v4.1.0 블록을 붙인다. 데이터가 없으면 base_prompt를 그대로 돌려준다
+    (D-1 회귀 동일 보장 — 렌즈 없음·정정 없음이면 v4.0.1과 한 글자도 다르지 않다)."""
+    lens = market_lens or {}
+    vn = market_lens_has_vn(lens)
+    rc_block = build_reality_corrections_block_for_writer(reality_corrections or [])
+    if not vn and not rc_block:
+        return base_prompt
+    parts = ["━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+             "[v4.1.0 추가 규칙 — 집필 전에 먼저 읽고, 원고 끝까지 지켜라. 위 규칙과 같은 등급이다]",
+             "━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
+    if rc_block:
+        parts += [rc_block, ""]
+    if vn:
+        parts += [A39_DIALOGUE_LANGUAGE_RULE, "",
+                  build_market_lens_block_for_writer(lens, genre, historical, with_output_blocks)]
+        if with_output_blocks:
+            parts += ["", build_market_output_addendum(lens, genre, historical)]
+    return base_prompt.rstrip() + "\n\n" + "\n".join(parts).strip()
+
+
+# ───────────────────────────────────────────────────────────
+# 출력 후처리 — <LOCAL_VERIFY> / <RATING_CHECK> 추출·제거 (W-6·W-7)
+# ───────────────────────────────────────────────────────────
+
+_LV_BLOCK_RE = re.compile(r"<(LOCAL_VERIFY|RATING_CHECK)>([\s\S]*?)(?:</\1>|\Z)")
+_LV_STRIP_RE = re.compile(r"\n*<(LOCAL_VERIFY|RATING_CHECK)>[\s\S]*?(?:</\1>|(?=\n<[A-Z_]+>)|\Z)\n*")
+_MARKET_HEADER_RE = re.compile(r"\n*\[출력 추가 — 시장 렌즈 VN[^\]]*\][^\n]*\n?")
+
+
+def extract_local_verify(text: str, source: str = "") -> list:
+    """원고 출력에서 <LOCAL_VERIFY>·<RATING_CHECK> 항목을 읽는다.
+    반환: [{kind: 'verify'|'rating', no: int|None, item, reason, source}]"""
+    out = []
+    for m in _LV_BLOCK_RE.finditer(text or ""):
+        kind = "verify" if m.group(1) == "LOCAL_VERIFY" else "rating"
+        for raw in m.group(2).split("\n"):
+            ln = raw.strip().lstrip("-•·").strip()
+            if not ln or ln in ("없음", "해당 없음") or ln.startswith("S#번호"):
+                continue
+            cols = [c.strip() for c in ln.split("|")]
+            no = None
+            mm = re.match(r"S#\s*(\d+)", cols[0]) if cols else None
+            if mm:
+                no = int(mm.group(1))
+                cols = cols[1:]
+            item = cols[0] if cols else ""
+            reason = " | ".join(cols[1:]) if len(cols) > 1 else ""
+            if item:
+                out.append({"kind": kind, "no": no, "item": item, "reason": reason, "source": source})
+    return out
+
+
+def strip_local_verify(text: str) -> str:
+    """원고에서 <LOCAL_VERIFY>·<RATING_CHECK> 블록을 제거한다 (닫는 태그가 없어도 끝까지)."""
+    if not text or ("<LOCAL_VERIFY>" not in text and "<RATING_CHECK>" not in text
+                    and "[출력 추가 — 시장 렌즈 VN" not in text):
+        return text
+    t = _LV_STRIP_RE.sub("\n", text)
+    t = _MARKET_HEADER_RE.sub("\n", t)
+    return re.sub(r"\n{3,}", "\n\n", t).rstrip() + ("\n" if text.endswith("\n") else "")
+
+
+# ───────────────────────────────────────────────────────────
+# 파이썬 사후 점검 — 표시만, 자동 수정 없음
+# ───────────────────────────────────────────────────────────
+
+_ML_HEAD_RE = re.compile(r"^\s*S#\s*(\d+)\b(.*)$")
+_ML_DIALOGUE_RE = re.compile(r"^([^\t\n]{1,20}?)\t+(\S.*)$")
+_ML_PAREN_RE = re.compile(r"\([^)]*\)")
+_ML_LANG_WORDS = ("베트남어", "영어", "한국어", "중국어", "광둥어", "일본어", "인도네시아어", "태국어",
+                  "프랑스어", "러시아어", "크메르어", "라오어", "타갈로그어", "스페인어", "독일어")
+_ML_LANG_TAG_RE = re.compile(r"^\(([^)]*)\)")
+# 베트남 문자 — 성조·모음 부호가 붙은 라틴 문자 (Ă Â Đ Ê Ô Ơ Ư 계열 + 성조 결합형)
+_VN_CHARS = ("ăâđêôơưĂÂĐÊÔƠƯ"
+             "áàảãạắằẳẵặấầẩẫậéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ"
+             "ÁÀẢÃẠẮẰẲẴẶẤẦẨẪẬÉÈẺẼẸẾỀỂỄỆÍÌỈĨỊÓÒỎÕỌỐỒỔỖỘỚỜỞỠỢÚÙỦŨỤỨỪỬỮỰÝỲỶỸỴ")
+_VN_CHAR_RE = re.compile("[" + _VN_CHARS + "]")
+
+# W-5 — 한국 무속 장치 어휘 (HORROR)
+_SHAMAN_RE = re.compile(
+    r"굿판|(?<![가-힣])굿(?=을|이|은|도|하|\s|[.,!?…]|$)|내림굿|씻김굿|신굿|신내림|박수무당|무당|만신|작두|오방기|오방신장|방울을\s*흔")
+# W-4 — 한국 제도 직급·절차 어휘 (베트남 기관 인물 장면 확인용)
+_KR_INST_RE = re.compile(
+    r"(?:경위|경감|경정|총경|경사|경장|순경|경무관|치안감)님|영장실질심사|구속영장|체포영장|압수수색영장|"
+    r"지방검찰청|지검|지방법원|검찰\s*송치|송치(?:하|했|된|할)|기소유예|강력계|강력반|광역수사대|부장검사|검사님")
+
+# W-8 — 국립국어원 베트남어 표기 예시 (표기법 용례로 확인한 것만)
+VN_STANDARD_NAMES = {
+    "호찌민": ["호치민", "호지민"],
+    "냐짱": ["나트랑", "냐트랑", "나짱"],
+    "후에": ["훼"],
+    "응우옌": ["응웬", "누엔", "뉴엔", "응우엔", "응우웬", "응옌"],
+    "쩐": ["트란"],
+}
+
+
+def _ml_scenes(text: str) -> list:
+    """원고 → [(scene_no, heading_line, body_lines)]. 씬 헤딩 전 텍스트는 no=None."""
+    out, cur_no, head, buf = [], None, "", []
+    for ln in (text or "").split("\n"):
+        m = _ML_HEAD_RE.match(ln)
+        if m:
+            if buf or head:
+                out.append((cur_no, head, buf))
+            cur_no, head, buf = int(m.group(1)), ln.strip(), []
+        else:
+            buf.append(ln)
+    if buf or head:
+        out.append((cur_no, head, buf))
+    return out
+
+
+def _ml_clean_name(label: str) -> str:
+    return re.sub(r"\s+", "", _ML_PAREN_RE.sub("", label or "")).strip()
+
+
+def check_dialogue_language(text: str, non_korean_speakers: list) -> dict:
+    """W-2 — (1) 한국어 미구사 인물 대사 중 언어 표기 누락 줄, (2) 베트남 문자가 섞인 줄(원어 병기)."""
+    targets = {_ml_clean_name(n) for n in (non_korean_speakers or []) if _ml_clean_name(n)}
+    missing, original, checked = [], [], 0
+    for no, head, body in _ml_scenes(strip_local_verify(text or "")):
+        if head and _VN_CHAR_RE.search(head):
+            original.append({"no": no, "line": head})
+        for raw in body:
+            line = raw.rstrip()
+            if not line.strip() or line.strip().startswith("<"):
+                continue
+            if _VN_CHAR_RE.search(line):
+                original.append({"no": no, "line": line.strip()})
+            m = _ML_DIALOGUE_RE.match(line)
+            if not m:
+                continue
+            speaker = _ml_clean_name(m.group(1))
+            if speaker not in targets:
+                continue
+            checked += 1
+            tag = _ML_LANG_TAG_RE.match(m.group(2).strip())
+            if not (tag and any(w in tag.group(1) for w in _ML_LANG_WORDS)):
+                missing.append({"no": no, "speaker": speaker, "line": m.group(2).strip()})
+    return {"targets": sorted(targets), "checked": checked, "missing": missing, "original": original}
+
+
+def check_vn_misapplication(text: str) -> dict:
+    """W-4·W-5 — 한국 제도 어휘 위치, 한국 무속 어휘 위치. 판정이 아니라 확인 목록."""
+    inst, shaman = [], []
+    for no, head, body in _ml_scenes(strip_local_verify(text or "")):
+        for ln in [head] + body:
+            if not ln.strip():
+                continue
+            for m in _KR_INST_RE.finditer(ln):
+                inst.append({"no": no, "term": m.group(0), "line": ln.strip()})
+            for m in _SHAMAN_RE.finditer(ln):
+                shaman.append({"no": no, "term": m.group(0).strip(), "line": ln.strip()})
+    return {"kr_institution": inst, "shamanism": shaman}
+
+
+_JAMO_L = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
+_JAMO_V = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ"
+_L_FOLD = {"ㄲ": "ㄱ", "ㅋ": "ㄱ", "ㄸ": "ㄷ", "ㅌ": "ㄷ", "ㅃ": "ㅂ", "ㅍ": "ㅂ",
+           "ㅉ": "ㅈ", "ㅊ": "ㅈ", "ㅆ": "ㅅ"}
+_V_FOLD = {"ㅐ": "ㅔ", "ㅒ": "ㅖ", "ㅙ": "ㅞ", "ㅚ": "ㅞ"}
+
+
+def _fold_hangul(s: str) -> str:
+    out = []
+    for ch in s:
+        code = ord(ch) - 0xAC00
+        if 0 <= code < 11172:
+            l, v, t = code // 588, (code % 588) // 28, code % 28
+            out.append(_L_FOLD.get(_JAMO_L[l], _JAMO_L[l]) + _V_FOLD.get(_JAMO_V[v], _JAMO_V[v]) + str(t))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def check_name_variants(text: str, extra_names: list = None) -> dict:
+    """W-8 — 인명·지명 이표기.
+    (1) 기준 이름 = 대사 화자 + 씬 헤딩 장소 토큰 + 넘겨받은 이름(씬리스트 인물 등).
+        된소리·거센소리·예사소리, ㅐ/ㅔ만 다르고 나머지가 같은 단어가 원고에 섞이면 이표기.
+    (2) 국립국어원 표기 용례와 다른 관용 표기(호치민 등)는 참고로 표시."""
+    body = strip_local_verify(text or "")
+    canon = set(_ml_clean_name(n) for n in (extra_names or []) if len(_ml_clean_name(n)) >= 2)
+    for no, head, lines in _ml_scenes(body):
+        if head:
+            loc = re.sub(r"^\s*S#\s*\d+\s*[.．]?\s*(?:INT\s*/\s*EXT|EXT\s*/\s*INT|INT|EXT|I/E)?\s*[.．]?", "", head)
+            loc = re.split(r"\s[—–-]\s|—|–", loc)[0]
+            canon |= {w for w in re.findall(r"[가-힣]{2,}", loc)}
+        for ln in lines:
+            m = _ML_DIALOGUE_RE.match(ln.rstrip())
+            if m:
+                nm = _ml_clean_name(m.group(1))
+                if len(nm) >= 2 and re.fullmatch(r"[가-힣]+", nm):
+                    canon.add(nm)
+    words = re.findall(r"[가-힣]{2,}", body)
+    word_set = set(words)
+    folded = {c: _fold_hangul(c) for c in canon}
+    variants = {}
+    for w in word_set:
+        for c, fc in folded.items():
+            if len(w) < len(c):
+                continue
+            pre = w[:len(c)]
+            if pre == c or pre in canon:
+                continue
+            if _fold_hangul(pre) == fc:
+                variants.setdefault(c, set()).add(pre)
+    mixed = [{"name": c, "variants": sorted(v)} for c, v in sorted(variants.items())]
+    nonstandard = []
+    for std, alts in VN_STANDARD_NAMES.items():
+        used = [a for a in alts if a in body]
+        if used:
+            nonstandard.append({"standard": std, "used": used, "standard_also_used": std in body})
+    return {"mixed": mixed, "nonstandard": nonstandard}
+
+
+def check_reality_terms(text: str, rc: list) -> dict:
+    """W-3 — '쓰지 말 표현'이 원고에 나오는지. applied = 실패, pending = 확인."""
+    body = strip_local_verify(text or "")
+    scenes = _ml_scenes(body)
+    fail, warn = [], []
+    for x in rc or []:
+        for term in x.get("terms") or []:
+            if not term or term not in body:
+                continue
+            nos = sorted({no for no, head, lines in scenes
+                          if no is not None and term in (head + "\n" + "\n".join(lines))})
+            hit = {"id": x.get("id", ""), "term": term, "scenes": nos, "reality": x.get("reality", "")}
+            (fail if x.get("status") == "applied" else warn).append(hit)
+    return {"fail": fail, "warn": warn}
+
+
+def run_market_checks(text: str, market_lens: dict = None, reality_corrections: list = None,
+                      non_korean_speakers: list = None, extra_names: list = None) -> dict:
+    """main.py가 한 번에 부르는 묶음. VN이 아니면 W-3만 (정정 데이터가 있을 때)."""
+    out = {"vn": market_lens_has_vn(market_lens or {})}
+    if reality_corrections:
+        out["reality"] = check_reality_terms(text, reality_corrections)
+    if out["vn"]:
+        out["language"] = check_dialogue_language(text, non_korean_speakers or [])
+        out["misapply"] = check_vn_misapplication(text)
+        out["names"] = check_name_variants(text, extra_names or [])
+    return out
