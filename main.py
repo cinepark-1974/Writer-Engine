@@ -1,5 +1,10 @@
 # ─────────────────────────────────────────────────────────────
 # BLUE JEANS SCREENPLAY WRITER ENGINE — main.py
+# v4.2.0 (2026-10-24) — 빈 반응 지문 차단 · 공간 분할 하위 씬
+#   * 시퀀스마다 공간 횡단(한 헤딩 안에서 다른 공간으로 넘어감)·빈 반응 지문(A40) 점검 표시.
+#   * 씬 단위: "표시된 항목만 고치기" 버튼 — 공간 분할·빈 지문만 고치는 지시로 그 씬만 다시 쓴다.
+#   * 다운로드: 하위 씬 포함 최종 번호(S#1~N)로 다시 매기기 (기본 켬). 화면 원고는 Creator 번호 유지.
+#   * 15비트 모드: 비트별 빈 반응 지문 점검 패널.
 # v4.1.0 (2026-10-23) — Market Lens VN 수신 (Creator v2.9.1 요청서 W-1~W-8)
 #   * JSON 적용 시 market_lens·reality_corrections 저장, "VN(베트남) 1차 · KR(한국) 2차" 표시
 #     (사이드바 + STEP 1 상단에 상시 표시 — 적용 완료 메시지는 rerun으로 사라지므로).
@@ -3299,6 +3304,20 @@ if st.session_state.get("beats_done") and not _SL_MODE:
         unsafe_allow_html=True,
     )
 
+    # ★ v4.2.0 — 빈 반응 지문 점검 (A40) — 비트별
+    _db_beats = {}
+    for _bk in sorted(st.session_state["beats_done"].keys()):
+        _r = SLW.check_dead_beats(_strip_prop_state_memos(str(st.session_state["beats_done"][_bk]))) if SLW else None
+        if _r and _r["flags"]:
+            _db_beats[_bk] = _r
+    if SLW is not None:
+        with st.expander(f"🧹 빈 반응 지문 점검 (A40) — "
+                         f"{'표시 ' + str(sum(len(v['flags']) for v in _db_beats.values())) + '건' if _db_beats else '이상 없음'}",
+                         expanded=False):
+            st.caption("입 여닫기·멈춘다 단독·보기만 하는 문장·무반응 선언을 비트별로 셉니다. 자동으로 고치지 않습니다.")
+            for _bk, _r in _db_beats.items():
+                st.text(f"Beat {_bk} — " + SLW.format_dead_beat_report(_r))
+
     # ★ v4.1.0 — 시장 렌즈 점검 · 현지 고증 체크리스트
     _render_market_panel("\n\n".join(
         _strip_prop_state_memos(str(st.session_state["beats_done"][_bk]))
@@ -3519,11 +3538,13 @@ def _sl_rewrite_scene(seq_no: int, scene_no: int, instruction: str) -> None:
     done[seq_no] = SLW.replace_scene_text(done[seq_no], scene_no, new_scene)
 
 
-def _sl_all_text(with_headers: bool = True) -> str:
+def _sl_all_text(with_headers: bool = True, texts: dict = None) -> str:
+    """texts를 주면 그 원고(예: 최종 번호로 다시 매긴 사본)를 쓴다. ★ v4.2.0"""
     h = _sl_handoff()
+    src = texts if texts is not None else _sl_done()
     parts = []
     for n in SLW.seq_numbers(h):
-        t = _sl_done().get(n)
+        t = src.get(n)
         if not t:
             continue
         body = _normalize_screenplay_blank_lines(t)
@@ -3576,6 +3597,9 @@ if _SL_MODE:
 
     # ── 시퀀스별 영역 ──
     _locked = set(int(x) for x in st.session_state.get("locked_scenes", []))
+    # ★ v4.2.0 — 인물 이름 (공간 횡단·빈 반응 지문 점검에서 사물 주어 오탐 차단)
+    _sl_person_names = sorted({SLW.normalize_name(c) for _s in _h.get("scenes", [])
+                               for c in _s.get("characters", [])} - {""})
     for _n in _seqs:
         _q = SLW.get_sequence(_h, _n)
         _sc = SLW.get_seq_scenes(_h, _n)
@@ -3583,12 +3607,16 @@ if _SL_MODE:
         _txt = _done.get(_n, "")
         _rep = SLW.verify_against_scene_list(_txt, _h, _n) if _txt else None
         _sp = SLW.check_speech_registers(_txt, _h, _n) if _txt else None
+        # ★ v4.2.0 — 공간 횡단(한 헤딩 안에서 다른 공간으로 넘어감) · 빈 반응 지문(A40)
+        _cr = SLW.check_space_crossing(_txt, _sl_person_names) if _txt else []
+        _db = SLW.check_dead_beats(_txt, _sl_person_names) if _txt else {"counts": {}, "flags": []}
         if not _txt:
             _mark = "⬜"
-        elif _rep["ok"] and not _sp["flags"]:
+        elif _rep["ok"] and not _sp["flags"] and not _cr and not _db["flags"]:
             _mark = "✅"
         else:
-            _mark = f"⚠️ 이탈 {len(_rep['issues'])} · 말투 {len(_sp['flags'])}"
+            _mark = (f"⚠️ 이탈 {len(_rep['issues'])} · 말투 {len(_sp['flags'])}"
+                     f" · 공간 {len(_cr)} · 빈 지문 {len(_db['flags'])}")
         with st.expander(f"시퀀스 {_n} · {_q.get('label', '')} ({_range}) {_mark}",
                          expanded=False):
             if _q.get("goal"):
@@ -3608,6 +3636,17 @@ if _SL_MODE:
                 st.warning("말투 1차 검출 (종결어미 기준 · 최종 판단은 작가)\n\n" + _sp_text)
             else:
                 st.caption(_sp_text)
+            # ★ v4.2.0 — 공간 횡단 (A36 의무 조항)
+            if _cr:
+                st.warning("한 헤딩 안에서 공간이 바뀐 씬 — 하위 씬(S#N-1)으로 나눠야 합니다\n\n"
+                           + "\n".join(f"  {c['label']} '{c['line']}' 이후 {c['subject']}의 대사가 이어짐"
+                                        for c in _cr))
+            # ★ v4.2.0 — 빈 반응 지문 (A40)
+            _db_text = SLW.format_dead_beat_report(_db)
+            if _db["flags"]:
+                st.warning(_db_text)
+            else:
+                st.caption(_db_text)
 
             st.text(_normalize_screenplay_blank_lines(_txt))
 
@@ -3639,7 +3678,8 @@ if _SL_MODE:
                 unsafe_allow_html=True,
             )
             _nos = [int(s["no"]) for s in _sc]
-            _issue_nos = {i["no"] for i in _rep["issues"]} | {f["no"] for f in _sp["flags"]}
+            _issue_nos = ({i["no"] for i in _rep["issues"]} | {f["no"] for f in _sp["flags"]}
+                          | {c["no"] for c in _cr} | {f["no"] for f in _db["flags"]})
             _pick = st.selectbox(
                 "씬 선택", _nos, key=f"sl_pick_{_n}",
                 format_func=lambda x: f"S#{x}" + (" 🔒" if x in _locked else "")
@@ -3650,6 +3690,29 @@ if _SL_MODE:
                                  key=f"sl_edit_{_n}_{_pick}_{hash(_cur_scene)}")
             _s_note = st.text_input("이 씬 수정 지시 (선택)", key=f"sl_scene_note_{_n}_{_pick}",
                                     placeholder="예: 대사 방식 고백인데 터지는 순간이 약하다")
+            # ★ v4.2.0 — 이 씬의 점검 결과만 골라 고치는 버튼 (다른 문장은 그대로)
+            _pick_db = [f for f in _db["flags"] if f["no"] == _pick]
+            _pick_cr = [c for c in _cr if c["no"] == _pick]
+            if _pick_db or _pick_cr:
+                _fix_parts = []
+                if _pick_cr:
+                    _fix_parts.append(
+                        "[A36 공간 분할 — 이 지시만 수행한다]\n"
+                        + "\n".join(f"- '{c['line']}' 이후 장면이 다른 공간에서 이어진다. 그 순간부터 "
+                                     f"S#{_pick}-1 하위 씬으로 나누고 새 공간의 헤딩을 단다."
+                                     for c in _pick_cr)
+                        + "\n원 번호 씬의 헤딩·내용·대사는 그대로 둔다. 사건을 더하지 않는다.")
+                if _pick_db:
+                    _fix_parts.append(SLW.dead_beat_fix_instruction(_pick_db))
+                _fix_instr = "\n\n".join(_fix_parts)
+                st.caption("이 씬 점검 결과: " + " / ".join(
+                    [f"공간 분할 {len(_pick_cr)}건"] * bool(_pick_cr)
+                    + [f"빈 반응 지문 {len(_pick_db)}건"] * bool(_pick_db)))
+                if st.button("🩹 표시된 항목만 고치기 (나머지 문장 유지)", key=f"sl_fix_{_n}_{_pick}",
+                             use_container_width=True, disabled=(_pick in _locked),
+                             help="공간 분할·빈 반응 지문만 고치는 지시로 이 씬을 다시 씁니다. 잠긴 씬은 잠금을 풀어야 합니다."):
+                    _sl_rewrite_scene(_n, _pick, _fix_instr + (("\n\n[작가 추가 지시]\n" + _s_note) if _s_note.strip() else ""))
+                    st.rerun()
             _d1, _d2, _d3, _d4 = st.columns(4)
             with _d1:
                 if st.button("💾 직접 수정 저장 (잠금)", key=f"sl_save_{_n}_{_pick}",
@@ -3718,10 +3781,17 @@ if _SL_MODE:
             unsafe_allow_html=True,
         )
         _cnt = f"{len(_done)}/{len(_seqs)}"
+        # ★ v4.2.0 — 최종 번호 (하위 씬 포함 S#1~N). 화면 원고는 Creator 번호 그대로 유지.
+        _renum = st.checkbox("다운로드 원고는 최종 번호로 다시 매기기 (하위 씬 포함 S#1~N)",
+                             value=True, key="sl_renumber_dl")
+        _final_texts, _final_n = SLW.renumber_sequence_texts(_done, list(_seqs))
+        st.caption(f"Creator 씬리스트 {len(_h.get('scenes', []))}씬 → 원고 {_final_n}씬"
+                   f" (공간 분할 하위 씬 {max(0, _final_n - sum(1 for _s in _h.get('scenes', []) if int(_s.get('seq', 0)) in _done))}개 포함)")
+        _dl_texts = _final_texts if _renum else _done
         _e1, _e2, _e3 = st.columns(3)
         with _e1:
             st.download_button(
-                label=f"TXT 저장 ({_cnt})", data=_sl_all_text(),
+                label=f"TXT 저장 ({_cnt})", data=_sl_all_text(texts=_dl_texts),
                 file_name=_build_download_filename(st.session_state.get("title", ""), genre, "txt"),
                 mime="text/plain", use_container_width=True, key="sl_txt_dl",
             )
@@ -3732,7 +3802,7 @@ if _SL_MODE:
                     _a = SLW.act_of_seq(_h, _sn)
                     _act_map[_sn] = f"{_a}막" if _a else "본문"
                 _docx = make_docx_bytes(
-                    genre, {k: _done[k] for k in sorted(_done)},
+                    genre, {k: _dl_texts[k] for k in sorted(_dl_texts)},
                     title=st.session_state.get("title", ""),
                     fact_based=st.session_state.get("fact_based", False),
                     historical=st.session_state.get("historical", False),

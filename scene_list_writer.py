@@ -1,7 +1,15 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS Story Engine — Scene List Writer Pack v1.0.0
+# BLUE JEANS Story Engine — Scene List Writer Pack v1.1.0
 # scene_list_writer.py — 씬리스트 기준 집필 레이어 (로더 + 파이썬 검증)
 # © 2026 BLUE JEANS PICTURES
+#
+# v1.1.0 (2026-10-24) — Writer Engine v4.2.0
+# - 하위 씬(S#4-1) 지원: 공간이 바뀌면 씬을 나눈다. 원 번호는 Creator 씬리스트 그대로.
+#   parse_scenes()에 sub 필드. get/replace_scene_text는 S#N 블록(하위 씬 포함) 단위.
+#   verify_against_scene_list: 하위 씬 위치(원 번호 바로 뒤)·같은 공간 쪼개기 점검.
+# - check_space_crossing(): 한 씬 안에서 인물이 다른 공간으로 넘어간 뒤 장면이 이어지는 곳.
+# - check_dead_beats(): A40 빈 반응 지문(입 여닫기·멈춘다·보기만·무반응) 집계.
+# - renumber_sequence_texts(): 다운로드용 최종 번호(S#1~N).
 #
 # v1.0.0 (2026-10-01):
 # - Mr. MOON 요청: "비트 단위 자유 집필에서 씬리스트 기준 집필로 전환한다.
@@ -27,8 +35,8 @@ import re
 import copy
 
 MODULE_NAME = "BLUE JEANS Story Engine — Scene List Writer Pack"
-MODULE_VERSION = "v1.0.0"
-MODULE_BUILD_DATE = "2026-10-01"
+MODULE_VERSION = "v1.1.0"
+MODULE_BUILD_DATE = "2026-10-24"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -361,12 +369,12 @@ def seq_character_names(h: dict, seq_no: int) -> list:
 # ═══════════════════════════════════════════════════════════
 
 _HEAD_RE = re.compile(
-    r"^\s*S#\s*(\d+)\s*[.．]?\s*"
+    r"^\s*S#\s*(\d+)(?:-(\d+))?\s*[.．]?\s*"
     r"(?:(INT\s*/\s*EXT|EXT\s*/\s*INT|INT|EXT|I/E)\s*[.．]?\s*)?"
     r"(.*?)\s*(?:[—–]|\s-\s)\s*(.+?)\s*$",
     re.IGNORECASE,
 )
-_HEAD_LOOSE_RE = re.compile(r"^\s*S#\s*(\d+)\b(.*)$")
+_HEAD_LOOSE_RE = re.compile(r"^\s*S#\s*(\d+)(?:-(\d+))?\b(.*)$")
 _NOTES_RE = re.compile(r"<WRITER_NOTES_BEGIN>.*?(?:<WRITER_NOTES_END>|$)", re.S)
 
 
@@ -381,47 +389,66 @@ def strip_notes(text: str) -> str:
 
 
 def parse_scenes(text: str) -> list:
-    """원고 → [{no, int_ext, location, time, heading, body, start, end}]
-    start/end는 원문 내 줄 인덱스 (씬 교체용)."""
+    """원고 → [{no, sub, int_ext, location, time, heading, body, start, end}]
+    start/end는 원문 내 줄 인덱스 (씬 교체용).
+    ★ v4.2.0 — 하위 씬(S#4-1)은 no=4, sub=1. 원 번호 씬은 sub=0."""
     body_text = strip_notes(text)
     lines = body_text.split("\n")
     heads = []
     for i, ln in enumerate(lines):
         m = _HEAD_RE.match(ln)
         if m:
-            heads.append((i, int(m.group(1)), (m.group(2) or "").upper().replace(" ", ""),
-                          m.group(3).strip(), m.group(4).strip(), ln.strip()))
+            heads.append((i, int(m.group(1)), int(m.group(2) or 0),
+                          (m.group(3) or "").upper().replace(" ", ""),
+                          m.group(4).strip(), m.group(5).strip(), ln.strip()))
             continue
         m2 = _HEAD_LOOSE_RE.match(ln)
         if m2:
-            heads.append((i, int(m2.group(1)), "", m2.group(2).strip(" .—-"), "", ln.strip()))
+            heads.append((i, int(m2.group(1)), int(m2.group(2) or 0), "",
+                          m2.group(3).strip(" .—-"), "", ln.strip()))
     out = []
-    for k, (i, no, ie, loc, tm, head) in enumerate(heads):
+    for k, (i, no, sub, ie, loc, tm, head) in enumerate(heads):
         j = heads[k + 1][0] if k + 1 < len(heads) else len(lines)
-        out.append({"no": no, "int_ext": ie, "location": loc, "time": tm,
+        out.append({"no": no, "sub": sub, "int_ext": ie, "location": loc, "time": tm,
                     "heading": head, "body": "\n".join(lines[i + 1:j]).strip("\n"),
                     "start": i, "end": j})
     return out
 
 
-def get_scene_text(text: str, no: int) -> str:
-    lines = strip_notes(text).split("\n")
-    for s in parse_scenes(text):
+def _scene_block_range(text: str, no: int):
+    """S#no 블록 = 원 번호 씬 + 바로 뒤에 붙은 하위 씬(S#no-1, S#no-2 …). (start, end) 또는 None."""
+    sc = parse_scenes(text)
+    for k, s in enumerate(sc):
         if s["no"] == int(no):
-            return "\n".join(lines[s["start"]:s["end"]]).strip("\n")
-    return ""
+            end = s["end"]
+            for t in sc[k + 1:]:
+                if t["no"] == int(no) and t["sub"] > 0:
+                    end = t["end"]
+                else:
+                    break
+            return s["start"], end
+    return None
+
+
+def get_scene_text(text: str, no: int) -> str:
+    """S#no 한 블록(하위 씬 포함)의 원고."""
+    lines = strip_notes(text).split("\n")
+    r = _scene_block_range(text, no)
+    if not r:
+        return ""
+    return "\n".join(lines[r[0]:r[1]]).strip("\n")
 
 
 def replace_scene_text(text: str, no: int, new_scene: str) -> str:
-    """원고에서 S#no 한 씬만 교체. 내부 메모는 버린다(본문만 남김)."""
+    """원고에서 S#no 한 블록(하위 씬 포함)만 교체. 내부 메모는 버린다(본문만 남김)."""
     lines = strip_notes(text).split("\n")
-    for s in parse_scenes(text):
-        if s["no"] == int(no):
-            new_lines = strip_notes(new_scene).strip("\n").split("\n")
-            tail = lines[s["end"]:]
-            mid = new_lines + (["", ""] if tail else [])   # 씬 사이 빈 줄 2개 유지
-            return "\n".join(lines[:s["start"]] + mid + tail).rstrip() + "\n"
-    return text
+    r = _scene_block_range(text, no)
+    if not r:
+        return text
+    new_lines = strip_notes(new_scene).strip("\n").split("\n")
+    tail = lines[r[1]:]
+    mid = new_lines + (["", ""] if tail else [])   # 씬 사이 빈 줄 2개 유지
+    return "\n".join(lines[:r[0]] + mid + tail).rstrip() + "\n"
 
 
 def last_scene_text(text: str) -> str:
@@ -453,8 +480,24 @@ def verify_against_scene_list(text: str, h: dict, seq_no: int) -> dict:
     issues = []
 
     seen = []
+    subs = 0
+    prev = None
     for a in actual:
         no = a["no"]
+        # ★ v4.2.0 — 하위 씬: 공간이 바뀌어 나눈 씬. 원 번호 씬 바로 뒤에만, 다른 공간이어야 한다.
+        if a.get("sub", 0) > 0:
+            subs += 1
+            if no not in exp_by_no:
+                issues.append({"no": no, "type": "추가", "detail": f"씬리스트에 없는 번호의 하위 씬 — {a['heading']}"})
+            elif not prev or prev["no"] != no:
+                issues.append({"no": no, "type": "하위 씬 위치",
+                               "detail": f"S#{no}-{a['sub']}가 S#{no} 바로 뒤에 있지 않음 — {a['heading']}"})
+            elif _place_ok(prev["location"], a["location"]) and prev["int_ext"] == a["int_ext"]:
+                issues.append({"no": no, "type": "같은 공간 쪼개기",
+                               "detail": f"S#{no}-{a['sub']}가 앞 씬과 같은 공간 '{a['location']}' — 공간이 바뀔 때만 나눈다"})
+            prev = a
+            continue
+        prev = a
         if no not in exp_by_no:
             issues.append({"no": no, "type": "추가", "detail": f"씬리스트에 없는 씬 — {a['heading']}"})
             continue
@@ -487,8 +530,8 @@ def verify_against_scene_list(text: str, h: dict, seq_no: int) -> dict:
                        "detail": f"원고 순서 {order_actual} ↔ 씬리스트 {order_expected}"})
 
     issues.sort(key=lambda x: x["no"])
-    return {"seq": seq_no, "expected": len(exp_order), "written": len(actual),
-            "issues": issues, "ok": not issues}
+    return {"seq": seq_no, "expected": len(exp_order), "written": len(actual) - subs,
+            "subs": subs, "issues": issues, "ok": not issues}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -605,9 +648,10 @@ def check_speech_registers(text: str, h: dict, seq_no: int) -> dict:
 # ═══════════════════════════════════════════════════════════
 
 def format_scene_list_report(rep: dict) -> str:
+    sub_t = f" · 공간 분할 하위 씬 {rep['subs']}개" if rep.get("subs") else ""
     if rep.get("ok"):
-        return f"시퀀스 {rep['seq']}: 씬리스트 {rep['expected']}씬 전부 일치."
-    lines = [f"시퀀스 {rep['seq']}: 씬리스트 {rep['expected']}씬 / 원고 {rep['written']}씬 — 이탈 {len(rep['issues'])}건"]
+        return f"시퀀스 {rep['seq']}: 씬리스트 {rep['expected']}씬 전부 일치{sub_t}."
+    lines = [f"시퀀스 {rep['seq']}: 씬리스트 {rep['expected']}씬 / 원고 {rep['written']}씬{sub_t} — 이탈 {len(rep['issues'])}건"]
     for i in rep["issues"]:
         lines.append(f"  S#{i['no']} [{i['type']}] {i['detail']}")
     return "\n".join(lines)
@@ -622,3 +666,162 @@ def format_speech_report(rep: dict) -> str:
     for f in rep["flags"]:
         lines.append(f"  S#{f['no']} {f['speaker']} → {f['to']} (표: {f['expected']} / 대사: {f['detected']})  {f['line']}")
     return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════
+# 9. ★ v4.2.0 — 공간 횡단 점검 · 빈 반응 지문 점검 · 최종 번호
+#    세는 주체(파이썬)와 쓰는 주체(AI)를 분리한다. 표시만 하고 자동 수정하지 않는다.
+# ═══════════════════════════════════════════════════════════
+
+_SENT_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
+_SUBJ_RE = re.compile(r"^([가-힣A-Za-z][가-힣A-Za-z\s]{0,8}?)(?:이|가|은|는)\s")
+_ENTER_RE = re.compile(r"(?:안으로\s*)?(?:들어간다|들어선다)\.?$")
+_EXIT_RE = re.compile(r"(?:^|[\s,])(?:밖으로\s*)?(?:나간다|빠져나간다)\.?$")
+
+
+def _action_sentences(body: str):
+    """씬 본문 → [(줄 번호, 문장)] — 대사 줄은 제외."""
+    out = []
+    for li, raw in enumerate((body or "").split("\n")):
+        ln = raw.strip()
+        if not ln or _DIALOGUE_RE.match(raw.rstrip()) or ln.startswith(("[", "INSERT", "<", "CUT TO", "(")):
+            continue
+        for s in _SENT_SPLIT_RE.split(ln):
+            s = s.strip()
+            if s:
+                out.append((li, s))
+    return out
+
+
+def _subject_of(sent: str) -> str:
+    m = _SUBJ_RE.match(sent)
+    return normalize_name(m.group(1).strip()) if m else ""
+
+
+def check_space_crossing(text: str, names: list = None) -> list:
+    """한 씬 안에서 인물이 다른 공간으로 넘어간 뒤에도 그 인물의 장면이 이어지는 곳.
+    (예: EXT 골목 씬에서 '중이 문을 열고 들어간다.' 다음에 중의 대사가 계속됨)
+    판정은 '넘어간 인물의 대사가 같은 씬에서 이어지는가'만 본다 (지문 언급은 회상·관계절 오탐이 많다).
+    → 공간이 바뀌었으니 하위 씬(S#N-1)으로 나눠야 한다는 표시.
+    names를 주면 그 인물만 주어로 본다 (실·연기 같은 사물 주어 오탐 차단)."""
+    flags = []
+    for sc in parse_scenes(text):
+        ie = sc["int_ext"]
+        lines = sc["body"].split("\n")
+        sents = _action_sentences(sc["body"])
+        for idx, (li, sent) in enumerate(sents):
+            crossing = (ie == "EXT" and _ENTER_RE.search(sent)) or (ie == "INT" and _EXIT_RE.search(sent))
+            if not crossing:
+                continue
+            subj = _subject_of(sent)
+            if not subj or (names and subj not in names):
+                continue
+            cont = False
+            for raw in lines[li + 1:]:
+                m = _DIALOGUE_RE.match(raw.rstrip())
+                if m and normalize_name(_PAREN_RE.sub("", m.group(1))) == subj:
+                    cont = True
+                    break
+            if cont:
+                label = f"S#{sc['no']}" + (f"-{sc['sub']}" if sc.get("sub") else "")
+                flags.append({"no": sc["no"], "label": label, "subject": subj, "line": sent,
+                              "heading": sc["heading"]})
+    return flags
+
+
+# ── 빈 반응 지문 (A40) ──
+_DB_MOUTH_RE = re.compile(r"입을\s*(?:연다|열었다|열다|열고|열려|다문다|다물|닫는다|닫았다|닫고)|입술(?:이|만)\s*(?:움직|달싹|떨)")
+_DB_STOP_RE = re.compile(r"멈춘다\.?$")
+_DB_LOOK_RE = re.compile(r"^[^,，]{0,30}(?:본다|바라본다|쳐다본다|돌아본다|내려다본다|올려다본다|들여다본다)\.?$")
+_DB_NONACT_RE = re.compile(r"(?:대답하지 않는다|대답이 없다|아무 말도 하지 않는다|아무 말이 없다|말이 없다|움직이지 않는다)\.?$")
+
+DEAD_BEAT_QUOTA = {"mouth": 0, "nonact": 1, "stop": 1, "look": 3}   # 시퀀스(또는 비트) 1회 집필당 허용
+DEAD_BEAT_LABELS = {"mouth": "입 여닫기·입술만 움직임", "nonact": "무반응 선언", "stop": "멈춘다 단독", "look": "보기만 하는 문장"}
+
+
+_BODY_SUBJ_RE = re.compile(r"^(?:[가-힣A-Za-z ]{1,8}의\s*)?(?:손|손가락|발|걸음|숨|입술|몸|눈|시선|어깨)(?:이|가|은|는)\s")
+
+
+def _is_person_stop(sent: str, names: list) -> bool:
+    """멈춘다의 주어가 사람(또는 사람의 몸)인가. 사물·현상의 멈춤은 호러 사건이라 제외(A40 예외)."""
+    if _BODY_SUBJ_RE.match(sent) or not _SUBJ_RE.match(sent):
+        return True                      # 몸의 멈춤, 또는 주어 없는 '멈춘다.'
+    subj = _subject_of(sent)
+    if not names:
+        return True
+    return any(subj.startswith(n) for n in names if n)
+
+
+def check_dead_beats(text: str, names: list = None) -> dict:
+    """A40 — 아무것도 바꾸지 않는 반응 지문을 센다.
+    입 여닫기는 0회 허용, 나머지는 허용치를 넘는 것부터 표시. 연속된 '본다' 문장은 허용치와 무관하게 표시.
+    names(인물 이름)를 주면 사물·현상의 '멈춘다'(바늘이 멈춘다)는 세지 않는다."""
+    found = {k: [] for k in DEAD_BEAT_QUOTA}
+    prev_look = None
+    for sc in parse_scenes(text):
+        label = f"S#{sc['no']}" + (f"-{sc['sub']}" if sc.get("sub") else "")
+        for li, sent in _action_sentences(sc["body"]):
+            kind = None
+            if _DB_MOUTH_RE.search(sent):
+                kind = "mouth"
+            elif _DB_NONACT_RE.search(sent):
+                kind = "nonact"
+            elif _DB_STOP_RE.search(sent) and len(sent) <= 32 and _is_person_stop(sent, names):
+                kind = "stop"
+            elif _DB_LOOK_RE.match(sent):
+                kind = "look"
+            if kind:
+                item = {"no": sc["no"], "label": label, "line": sent, "consecutive": False}
+                if kind == "look" and prev_look and prev_look["label"] == label and prev_look["li"] == li:
+                    item["consecutive"] = True
+                found[kind].append(item)
+                prev_look = {"label": label, "li": li} if kind == "look" else None
+            else:
+                prev_look = None
+    flags = []
+    for k, items in found.items():
+        q = DEAD_BEAT_QUOTA[k]
+        for i, it in enumerate(items):
+            if i >= q or it["consecutive"]:
+                flags.append(dict(it, kind=k, label_kind=DEAD_BEAT_LABELS[k]))
+    flags.sort(key=lambda x: (x["no"], x["label"]))
+    return {"counts": {k: len(v) for k, v in found.items()}, "flags": flags}
+
+
+def format_dead_beat_report(rep: dict) -> str:
+    c = rep["counts"]
+    head = " · ".join(f"{DEAD_BEAT_LABELS[k]} {c[k]}" + (f"(허용 {DEAD_BEAT_QUOTA[k]})") for k in DEAD_BEAT_QUOTA)
+    lines = [f"빈 반응 지문(A40): {head} — 표시 {len(rep['flags'])}건"]
+    for f in rep["flags"][:60]:
+        lines.append(f"  {f['label']} [{f['label_kind']}{' · 연속' if f['consecutive'] else ''}] {f['line']}")
+    return "\n".join(lines)
+
+
+def dead_beat_fix_instruction(flags: list) -> str:
+    """씬 다시 쓰기용 지시문 — 표시된 문장만 고치게 한다."""
+    if not flags:
+        return ""
+    body = "\n".join(f"- {f['line']}" for f in flags)
+    return ("[A40 빈 반응 지문 정리 — 이 지시만 수행한다]\n"
+            "아래 문장은 아무것도 바꾸지 않는 반응 지문이다. 각 문장을 둘 중 하나로 처리하라.\n"
+            "① 지운다 — 앞뒤 행동·대사만으로 장면이 성립하면 지운다.\n"
+            "② 상황을 바꾸는 행동으로 바꾼다 — 소품의 위치·상태, 인물의 위치, 상대가 아는 정보 중 하나가 바뀌어야 한다.\n"
+            "나머지 문장·대사·씬 구성은 한 글자도 바꾸지 마라.\n" + body)
+
+
+_RENUM_RE = re.compile(r"^(\s*)S#\s*\d+(?:-\d+)?(\s*[.．]?)", re.M)
+
+
+def renumber_sequence_texts(done: dict, order: list) -> tuple:
+    """★ v4.2.0 — 다운로드용 최종 번호. 하위 씬을 포함해 S#1부터 끝까지 다시 매긴다.
+    반환: (새 dict, 전체 씬 수). 원본은 바꾸지 않는다."""
+    counter = [0]
+
+    def _sub(m):
+        counter[0] += 1
+        return f"{m.group(1)}S#{counter[0]}{m.group(2) or '.'}"
+    out = {}
+    for n in order:
+        if n in done and done[n]:
+            out[n] = _RENUM_RE.sub(_sub, done[n])
+    return out, counter[0]
