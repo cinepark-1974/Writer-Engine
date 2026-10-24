@@ -1,7 +1,23 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v4.2.0
-# prompt.py — Full Version (Creator Engine v2.9.1 동기화)
+# BLUE JEANS SCREENPLAY WRITER ENGINE v4.3.0
+# prompt.py — Full Version (Creator Engine v2.9.2 동기화)
 # © 2026 BLUE JEANS PICTURES
+#
+# v4.3.0 주요 변경사항 (2026-10-25) — 분량 기준 · 씬리스트 사전 점검
+# - 실측 (「THE CRIMSON ROBE」 82씬): 41,222자, 씬당 평균 502자, 58씬이 600자 미만.
+#   원인 — 시퀀스 집필 규칙 5가 "'행동' 방식 씬은 짧아도 된다"고 허용했는데,
+#   Creator 씬리스트의 46/82씬이 '행동' 방식이었다. v4.2.0의 빈 지문 정리('지운다')도 분량을 더 줄인다.
+# - 분량 기준:
+#   · 시퀀스 프롬프트에 목표·최소 분량을 숫자로 주입 (씬 수 × 700자 / 씬별 최소의 합).
+#   · 씬마다 최소 600자 — '행동' 씬도 같다(대사 대신 행동 단계로 채운다). 이름 있는 인물이 없는 씬만 400자.
+#   · 씬 블록마다 '최소 분량' 표시. A37 행동 방식에 '분량은 줄이지 않는다' 추가.
+#   · 씬 재집필: 작가가 줄이라고 하지 않으면 현재 분량보다 줄이지 않는다.
+#   · 늘리는 방법은 사건의 단계(시도 → 막힘 → 다른 방법 → 결과). 빈 지문·감정 설명·풍경 나열 금지.
+# - scene_list_writer v1.2.0: check_scene_length / length_fix_instruction /
+#   dead_beat_fix_instruction(short=True) — 미달 씬은 빈 지문을 지우지 않고 행동으로 바꾼다.
+#   precheck_scene_list — Creator 잠금본의 퇴장 인물 재등장·중복 의심·끼움 씬·요약 속 공간 이동 (표시만).
+# - main.py: 시퀀스마다 분량 점검 + "분량 미달 씬 보강" 버튼, 씬 단위 고치기에 분량 포함,
+#   씬리스트 모드 상단 사전 점검, JSON 적용 메시지에 사전 점검 건수, 15비트 모드 분량 점검 패널.
 #
 # v4.2.0 주요 변경사항 (2026-10-24) — 빈 반응 지문 차단 · 공간 분할 하위 씬
 # - Mr. MOON 진단: "여전히 '입을 열었다 닫는다'와 같은 의미 없는 지문이 생성된다.
@@ -782,8 +798,8 @@
 # - Creator JSON 자동 로더
 # ─────────────────────────────────────────────────────────────
 
-ENGINE_VERSION = "v4.2.0"
-ENGINE_BUILD_DATE = "2026-10-24"
+ENGINE_VERSION = "v4.3.0"
+ENGINE_BUILD_DATE = "2026-10-25"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -9661,6 +9677,7 @@ A37. 씬별 대사 방식 — Dialogue Mode per Scene (씬리스트 모드 전�
 · ★ 이 씬에 한해 A35(핑퐁)와 분량 기준의 '대사 2~4개 교환'을 해제한다.
   대사가 0~2줄이어도 된다.
 · 대신 물리·정보·관계 중 하나가 반드시 바뀐다. 아무것도 안 바뀌면 실패.
+· 분량은 줄이지 않는다 (v4.3.0) — 대사가 빠진 자리를 행동 단계로 채운다. 씬당 최소 600자.
 · 남는 대사는 A34 적용.
 """.strip()
 
@@ -9795,7 +9812,8 @@ def _scene_block_for_prompt(SLW, handoff: dict, scene: dict, locked_text: str = 
            f"   · 등장: {chars}\n"
            f"   · 대사 방식: {mode_label}\n"
            f"   · 내용: {scene.get('summary', '')}\n"
-           f"   · 말투:\n{SLW.build_speech_table_for_scene(handoff, scene)}")
+           + (f"   · 최소 분량: {SLW.scene_min_chars(scene)}자\n" if hasattr(SLW, "scene_min_chars") else "")
+           + f"   · 말투:\n{SLW.build_speech_table_for_scene(handoff, scene)}")
     if locked_text:
         out += ("\n   · ★ 작가 확정본(잠금) — 이 씬은 아래 원문을 한 글자도 바꾸지 말고 그대로 옮겨라.\n"
                 "     ┌────────\n" + locked_text.strip() + "\n     └────────")
@@ -9952,6 +9970,9 @@ def build_write_sequence_prompt(
 
     first_no = scenes[0].get("no") if scenes else "?"
     last_no = scenes[-1].get("no") if scenes else "?"
+    # ★ v4.3.0 — 시퀀스 목표 분량 (씬별 최소 분량의 합 / 목표)
+    _len_t = SLW.sequence_length_target(handoff, seq_no) if hasattr(SLW, "sequence_length_target") else \
+        {"min_total": len(scenes) * 600, "target_total": len(scenes) * 700}
 
     _base_prompt = f"""
 [TASK] {seq_head} 집필 — 씬리스트 모드 (S#{first_no} ~ S#{last_no}, {len(scenes)}씬)
@@ -10045,7 +10066,11 @@ def build_write_sequence_prompt(
 2. 각 씬의 '내용' 한 줄이 그 씬의 사건이다. 욕망과 장애물이 부딪혀 무언가가 바뀌게 써라.
 3. 각 씬의 '대사 방식'을 A37대로 지킨다. 같은 시퀀스 안에서도 씬마다 방식이 다르다.
 4. 각 씬의 '말투' 표를 A38대로 지킨다.
-5. 분량: 1씬 600~800자 기준. '행동' 방식 씬은 짧아도 되지만 이미지가 강해야 한다.
+5. 분량 (v4.3.0): 이번 시퀀스 목표 {_len_t['target_total']:,}자 · 최소 {_len_t['min_total']:,}자 ({len(scenes)}씬).
+   씬마다 최소 600자, 목표 700자 안팎. 대사 방식이 '행동'인 씬도 같다 — 대사가 빠진 자리를 행동 단계로 채운다.
+   이름 있는 인물이 나오지 않는 공간·현상 씬만 최소 400자.
+   늘릴 때는 그 씬의 사건을 단계로 보여준다: 시도 → 막힘 → 다른 방법 → 결과(무언가가 바뀐다).
+   빈 반응 지문(A40)·감정 설명·풍경 나열로 늘리지 않는다. 출력 후 파이썬이 씬별 글자 수를 센다.
 6. 지문: 카메라가 보는 것만, 현재형 능동, 한 문장 = 한 샷, 연속 동작은 한 문장으로.
    시간 정밀 표기(숫자 초) 금지 — 연출의 영역이다. 필요하면 '잠깐', '한참', '[긴 정적]'.
 7. 첫 등장 인물 괄호는 (나이대, 성별)만. 이후 표기는 이름만.
@@ -10161,6 +10186,8 @@ def build_rewrite_scene_prompt(
    공간이 바뀌면 S#{scene_no}-1 하위 씬으로 나눈다 (A36 의무 조항).
 4. 직전·직후 씬과 감정·소품·시간이 이어지게 쓴다.
 5. 시간 정밀 표기(숫자 초) 금지. 따옴표는 둥근 따옴표.
+6. 분량 (v4.3.0): 이 씬은 최소 {SLW.scene_min_chars(scene) if (scene and hasattr(SLW, "scene_min_chars")) else 600}자. 작가 지시가 줄이라는 것이 아니면 현재 분량보다 줄이지 않는다.
+   빈 반응 지문(A40)·감정 설명·풍경 나열로 늘리지 않는다.
 
 [OUTPUT FORMAT]
 ★ S#{scene_no} 한 씬만 출력한다 (공간이 바뀌면 하위 씬 S#{scene_no}-1까지). 첫 줄은 씬 헤딩. 다른 씬·설명·메모를 쓰지 마라.

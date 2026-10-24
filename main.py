@@ -1,5 +1,10 @@
 # ─────────────────────────────────────────────────────────────
 # BLUE JEANS SCREENPLAY WRITER ENGINE — main.py
+# v4.3.0 (2026-10-25) — 분량 점검 · 씬리스트 사전 점검
+#   * 시퀀스마다 씬별 분량 점검(최소 600자) + "분량 미달 씬 보강" 버튼(미달 씬만 하나씩 다시 쓰기, 잠긴 씬 제외).
+#   * 씬 단위 "표시된 항목 고치기"에 분량 보강 포함 (미달 씬은 빈 지문을 지우지 않고 행동으로 바꿈).
+#   * 씬리스트 모드 상단: Creator 잠금본 사전 점검 (퇴장 인물 재등장·중복 의심·끼움 씬·요약 속 공간 이동).
+#   * 15비트 모드: 비트별 분량 점검 패널.
 # v4.2.0 (2026-10-24) — 빈 반응 지문 차단 · 공간 분할 하위 씬
 #   * 시퀀스마다 공간 횡단(한 헤딩 안에서 다른 공간으로 넘어감)·빈 반응 지문(A40) 점검 표시.
 #   * 씬 단위: "표시된 항목만 고치기" 버튼 — 공간 분할·빈 지문만 고치는 지시로 그 씬만 다시 쓴다.
@@ -2068,6 +2073,13 @@ with st.expander("⚡ Creator Engine JSON 업로드 (자동 채우기)", expande
             st.session_state["non_korean_speakers_raw"] = ", ".join(loaded.get("non_korean_speakers", []) or [])
             st.session_state["local_verify"] = {}
             _ml_label = market_codes_label(st.session_state["market_lens"]) or "렌즈 없음 (한국 기준 규칙 그대로)"
+            # ★ v4.3.0 — 씬리스트 사전 점검 (Creator 잠금본 안전망)
+            _pc_n = 0
+            if SLW is not None and _slh_new.get("available"):
+                try:
+                    _pc_n = SLW.precheck_counts(SLW.precheck_scene_list(_slh_new))
+                except Exception:
+                    _pc_n = 0
             _rc_n = len(st.session_state["reality_corrections"])
             
             # 엔진 버전 표시
@@ -2130,7 +2142,8 @@ with st.expander("⚡ Creator Engine JSON 업로드 (자동 채우기)", expande
                 f"{SLW.handoff_summary(_slh_new) if (SLW and _slh_new.get('available')) else '씬리스트 없음 — ' + _slh_new.get('reason', '')}\n\n"
                 f"**시장 렌즈 (v4.1.0)**: {_ml_label}\n\n"
                 f"**사실성 정정 (v4.1.0)**: {_rc_n}건\n\n"
-                f"**로드된 필드**: 11칸 + v3.1 신규 3칸 + v3.6.0 본질 + v3.7.1 사전 방지 4종"
+                + (f"**씬리스트 사전 점검 (v4.3.0)**: 확인 필요 {_pc_n}건 — 집필 화면 상단에서 확인하세요\n\n" if _pc_n else "")
+                + f"**로드된 필드**: 11칸 + v3.1 신규 3칸 + v3.6.0 본질 + v3.7.1 사전 방지 4종"
             )
             st.rerun()
         except json.JSONDecodeError as e:
@@ -3306,10 +3319,17 @@ if st.session_state.get("beats_done") and not _SL_MODE:
 
     # ★ v4.2.0 — 빈 반응 지문 점검 (A40) — 비트별
     _db_beats = {}
+    _short_beats = {}   # ★ v4.3.0 — 비트별 600자 미만 씬
     for _bk in sorted(st.session_state["beats_done"].keys()):
-        _r = SLW.check_dead_beats(_strip_prop_state_memos(str(st.session_state["beats_done"][_bk]))) if SLW else None
+        _bt = _strip_prop_state_memos(str(st.session_state["beats_done"][_bk]))
+        _r = SLW.check_dead_beats(_bt) if SLW else None
         if _r and _r["flags"]:
             _db_beats[_bk] = _r
+        if SLW:
+            _sh = [(s["no"], SLW._body_len(s["body"])) for s in SLW.parse_scenes(_bt)
+                   if SLW._body_len(s["body"]) < SLW.SCENE_MIN_CHARS]
+            if _sh:
+                _short_beats[_bk] = _sh
     if SLW is not None:
         with st.expander(f"🧹 빈 반응 지문 점검 (A40) — "
                          f"{'표시 ' + str(sum(len(v['flags']) for v in _db_beats.values())) + '건' if _db_beats else '이상 없음'}",
@@ -3317,6 +3337,11 @@ if st.session_state.get("beats_done") and not _SL_MODE:
             st.caption("입 여닫기·멈춘다 단독·보기만 하는 문장·무반응 선언을 비트별로 셉니다. 자동으로 고치지 않습니다.")
             for _bk, _r in _db_beats.items():
                 st.text(f"Beat {_bk} — " + SLW.format_dead_beat_report(_r))
+        with st.expander(f"📏 분량 점검 (씬당 최소 {SLW.SCENE_MIN_CHARS}자) — "
+                         f"{'미달 ' + str(sum(len(v) for v in _short_beats.values())) + '씬' if _short_beats else '이상 없음'}",
+                         expanded=False):
+            for _bk, _sh in _short_beats.items():
+                st.text(f"Beat {_bk} — " + " · ".join(f"S#{n} {c}자" for n, c in _sh))
 
     # ★ v4.1.0 — 시장 렌즈 점검 · 현지 고증 체크리스트
     _render_market_panel("\n\n".join(
@@ -3572,6 +3597,20 @@ if _SL_MODE:
         unsafe_allow_html=True,
     )
 
+    # ★ v4.3.0 — 씬리스트 사전 점검 (Creator 잠금본 안전망 · 표시만)
+    try:
+        _pc = SLW.precheck_scene_list(_h)
+    except Exception:
+        _pc = None
+    if _pc is not None:
+        _pc_n = SLW.precheck_counts(_pc)
+        with st.expander(f"🔎 씬리스트 사전 점검 (Creator 잠금본) — "
+                         f"{'확인 필요 ' + str(_pc_n) + '건' if _pc_n else '이상 없음'}",
+                         expanded=bool(_pc["dead_reappear"] or _pc["duplicates"])):
+            st.caption("Writer는 씬리스트를 바꾸지 않습니다. 요약 문장으로 찾은 1차 검출이며, 최종 판단은 작가가 합니다. "
+                       "퇴장 인물 재등장·중복은 Creator에서 고쳐 다시 잠근 뒤 집필하는 것을 권장합니다.")
+            st.text(SLW.format_precheck_report(_pc))
+
     # ── 핵심 요소 추출 (선택) — 15비트 모드와 같은 프롬프트 ──
     with st.expander(
         f"🔍 핵심 요소 추출 (선택) {'✅' if st.session_state.get('story_elements') else ''}",
@@ -3610,13 +3649,15 @@ if _SL_MODE:
         # ★ v4.2.0 — 공간 횡단(한 헤딩 안에서 다른 공간으로 넘어감) · 빈 반응 지문(A40)
         _cr = SLW.check_space_crossing(_txt, _sl_person_names) if _txt else []
         _db = SLW.check_dead_beats(_txt, _sl_person_names) if _txt else {"counts": {}, "flags": []}
+        # ★ v4.3.0 — 씬별 최소 분량
+        _ln = SLW.check_scene_length(_txt, _h, _n) if _txt else {"short": [], "total": 0}
         if not _txt:
             _mark = "⬜"
-        elif _rep["ok"] and not _sp["flags"] and not _cr and not _db["flags"]:
+        elif _rep["ok"] and not _sp["flags"] and not _cr and not _db["flags"] and not _ln["short"]:
             _mark = "✅"
         else:
             _mark = (f"⚠️ 이탈 {len(_rep['issues'])} · 말투 {len(_sp['flags'])}"
-                     f" · 공간 {len(_cr)} · 빈 지문 {len(_db['flags'])}")
+                     f" · 공간 {len(_cr)} · 빈 지문 {len(_db['flags'])} · 분량 미달 {len(_ln['short'])}")
         with st.expander(f"시퀀스 {_n} · {_q.get('label', '')} ({_range}) {_mark}",
                          expanded=False):
             if _q.get("goal"):
@@ -3647,6 +3688,24 @@ if _SL_MODE:
                 st.warning(_db_text)
             else:
                 st.caption(_db_text)
+            # ★ v4.3.0 — 분량
+            _ln_text = SLW.format_length_report(_ln)
+            if _ln["short"]:
+                st.warning(_ln_text)
+                _ln_targets = [x for x in _ln["short"] if x["no"] not in _locked]
+                if _ln_targets and st.button(
+                        f"📏 분량 미달 씬 {len(_ln_targets)}개 보강 (씬마다 따로 다시 쓰기 · 잠긴 씬 제외)",
+                        key=f"sl_len_all_{_n}", use_container_width=True,
+                        help="미달 씬만 하나씩 다시 씁니다. 각 씬은 ↩️ 씬 되돌리기로 복원할 수 있습니다."):
+                    for _it in _ln_targets:
+                        _sdb = [f for f in _db["flags"] if f["no"] == _it["no"]]
+                        _instr = SLW.length_fix_instruction(_it)
+                        if _sdb:
+                            _instr += "\n\n" + SLW.dead_beat_fix_instruction(_sdb, short=True)
+                        _sl_rewrite_scene(_n, _it["no"], _instr)
+                    st.rerun()
+            else:
+                st.caption(_ln_text)
 
             st.text(_normalize_screenplay_blank_lines(_txt))
 
@@ -3679,7 +3738,8 @@ if _SL_MODE:
             )
             _nos = [int(s["no"]) for s in _sc]
             _issue_nos = ({i["no"] for i in _rep["issues"]} | {f["no"] for f in _sp["flags"]}
-                          | {c["no"] for c in _cr} | {f["no"] for f in _db["flags"]})
+                          | {c["no"] for c in _cr} | {f["no"] for f in _db["flags"]}
+                          | {x["no"] for x in _ln["short"]})
             _pick = st.selectbox(
                 "씬 선택", _nos, key=f"sl_pick_{_n}",
                 format_func=lambda x: f"S#{x}" + (" 🔒" if x in _locked else "")
@@ -3693,7 +3753,8 @@ if _SL_MODE:
             # ★ v4.2.0 — 이 씬의 점검 결과만 골라 고치는 버튼 (다른 문장은 그대로)
             _pick_db = [f for f in _db["flags"] if f["no"] == _pick]
             _pick_cr = [c for c in _cr if c["no"] == _pick]
-            if _pick_db or _pick_cr:
+            _pick_ln = [x for x in _ln["short"] if x["no"] == _pick]   # ★ v4.3.0
+            if _pick_db or _pick_cr or _pick_ln:
                 _fix_parts = []
                 if _pick_cr:
                     _fix_parts.append(
@@ -3703,14 +3764,17 @@ if _SL_MODE:
                                      for c in _pick_cr)
                         + "\n원 번호 씬의 헤딩·내용·대사는 그대로 둔다. 사건을 더하지 않는다.")
                 if _pick_db:
-                    _fix_parts.append(SLW.dead_beat_fix_instruction(_pick_db))
+                    _fix_parts.append(SLW.dead_beat_fix_instruction(_pick_db, short=bool(_pick_ln)))
+                if _pick_ln:
+                    _fix_parts.append(SLW.length_fix_instruction(_pick_ln[0]))
                 _fix_instr = "\n\n".join(_fix_parts)
                 st.caption("이 씬 점검 결과: " + " / ".join(
                     [f"공간 분할 {len(_pick_cr)}건"] * bool(_pick_cr)
-                    + [f"빈 반응 지문 {len(_pick_db)}건"] * bool(_pick_db)))
-                if st.button("🩹 표시된 항목만 고치기 (나머지 문장 유지)", key=f"sl_fix_{_n}_{_pick}",
+                    + [f"빈 반응 지문 {len(_pick_db)}건"] * bool(_pick_db)
+                    + ([f"분량 {_pick_ln[0]['got']}자 / 최소 {_pick_ln[0]['min']}자"] if _pick_ln else [])))
+                if st.button("🩹 표시된 항목 고치기 (공간 분할 · 빈 지문 · 분량)", key=f"sl_fix_{_n}_{_pick}",
                              use_container_width=True, disabled=(_pick in _locked),
-                             help="공간 분할·빈 반응 지문만 고치는 지시로 이 씬을 다시 씁니다. 잠긴 씬은 잠금을 풀어야 합니다."):
+                             help="표시된 항목만 고치는 지시로 이 씬을 다시 씁니다. 잠긴 씬은 잠금을 풀어야 합니다."):
                     _sl_rewrite_scene(_n, _pick, _fix_instr + (("\n\n[작가 추가 지시]\n" + _s_note) if _s_note.strip() else ""))
                     st.rerun()
             _d1, _d2, _d3, _d4 = st.columns(4)

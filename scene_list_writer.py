@@ -1,7 +1,12 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS Story Engine — Scene List Writer Pack v1.1.0
+# BLUE JEANS Story Engine — Scene List Writer Pack v1.2.0
 # scene_list_writer.py — 씬리스트 기준 집필 레이어 (로더 + 파이썬 검증)
 # © 2026 BLUE JEANS PICTURES
+#
+# v1.2.0 (2026-10-25) — Writer Engine v4.3.0
+# - check_scene_length() / sequence_length_target() / length_fix_instruction(): 씬별 최소 분량(600자, 인물 없는 씬 400자).
+# - dead_beat_fix_instruction(short=True): 분량 미달 씬은 빈 지문을 지우지 않고 행동으로 바꾸게 한다.
+# - precheck_scene_list(): Creator 잠금본 사전 점검 — 퇴장 인물 재등장 · 중복 의심 · 끼움 씬 · 요약 속 공간 이동.
 #
 # v1.1.0 (2026-10-24) — Writer Engine v4.2.0
 # - 하위 씬(S#4-1) 지원: 공간이 바뀌면 씬을 나눈다. 원 번호는 Creator 씬리스트 그대로.
@@ -35,8 +40,8 @@ import re
 import copy
 
 MODULE_NAME = "BLUE JEANS Story Engine — Scene List Writer Pack"
-MODULE_VERSION = "v1.1.0"
-MODULE_BUILD_DATE = "2026-10-24"
+MODULE_VERSION = "v1.2.0"
+MODULE_BUILD_DATE = "2026-10-25"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -797,16 +802,23 @@ def format_dead_beat_report(rep: dict) -> str:
     return "\n".join(lines)
 
 
-def dead_beat_fix_instruction(flags: list) -> str:
-    """씬 다시 쓰기용 지시문 — 표시된 문장만 고치게 한다."""
+def dead_beat_fix_instruction(flags: list, short: bool = False) -> str:
+    """씬 다시 쓰기용 지시문 — 표시된 문장만 고치게 한다.
+    ★ v4.3.0 short=True(이 씬이 최소 분량 미달)면 '지운다'를 쓰지 않고 행동으로 바꾸게 한다."""
     if not flags:
         return ""
     body = "\n".join(f"- {f['line']}" for f in flags)
+    if short:
+        how = ("이 씬은 최소 분량에 못 미친다. 지우지 말고, 각 문장을 상황을 바꾸는 행동으로 바꿔라 —\n"
+               "소품의 위치·상태, 인물의 위치, 상대가 아는 정보 중 하나가 바뀌어야 한다.\n")
+        keep = "나머지 대사·씬 구성은 바꾸지 마라.\n"
+    else:
+        how = ("각 문장을 둘 중 하나로 처리하라.\n"
+               "① 지운다 — 앞뒤 행동·대사만으로 장면이 성립하면 지운다.\n"
+               "② 상황을 바꾸는 행동으로 바꾼다 — 소품의 위치·상태, 인물의 위치, 상대가 아는 정보 중 하나가 바뀌어야 한다.\n")
+        keep = "나머지 문장·대사·씬 구성은 한 글자도 바꾸지 마라.\n"
     return ("[A40 빈 반응 지문 정리 — 이 지시만 수행한다]\n"
-            "아래 문장은 아무것도 바꾸지 않는 반응 지문이다. 각 문장을 둘 중 하나로 처리하라.\n"
-            "① 지운다 — 앞뒤 행동·대사만으로 장면이 성립하면 지운다.\n"
-            "② 상황을 바꾸는 행동으로 바꾼다 — 소품의 위치·상태, 인물의 위치, 상대가 아는 정보 중 하나가 바뀌어야 한다.\n"
-            "나머지 문장·대사·씬 구성은 한 글자도 바꾸지 마라.\n" + body)
+            "아래 문장은 아무것도 바꾸지 않는 반응 지문이다. " + how + keep + body)
 
 
 _RENUM_RE = re.compile(r"^(\s*)S#\s*\d+(?:-\d+)?(\s*[.．]?)", re.M)
@@ -825,3 +837,222 @@ def renumber_sequence_texts(done: dict, order: list) -> tuple:
         if n in done and done[n]:
             out[n] = _RENUM_RE.sub(_sub, done[n])
     return out, counter[0]
+
+
+# ═══════════════════════════════════════════════════════════
+# 10. ★ v4.3.0 — 분량 점검 (씬별 최소 분량)
+#    「THE CRIMSON ROBE」 실측: 82씬 중 58씬이 600자 미만, 씬당 평균 502자.
+#    원인 중 하나 — '행동' 방식 씬은 짧아도 된다는 문구(46/82씬이 행동 방식).
+# ═══════════════════════════════════════════════════════════
+
+SCENE_MIN_CHARS = 600          # 이름 있는 인물이 나오는 씬 (대사 방식 무관 — '행동' 씬도 같다)
+SCENE_MIN_CHARS_NOCHAR = 400   # 이름 있는 인물이 없는 공간·현상 씬
+SCENE_TARGET_CHARS = 700
+
+
+def _body_len(body: str) -> int:
+    """공백 포함 글자 수 — 줄바꿈·연속 공백은 한 칸으로 센다."""
+    return len(re.sub(r"\s+", " ", body or "").strip())
+
+
+def scene_min_chars(scene: dict) -> int:
+    chars = [c for c in (scene.get("characters") or []) if str(c).strip()]
+    return SCENE_MIN_CHARS if chars else SCENE_MIN_CHARS_NOCHAR
+
+
+def sequence_length_target(h: dict, seq_no: int) -> dict:
+    sc = get_seq_scenes(h, seq_no)
+    return {"scenes": len(sc), "min_total": sum(scene_min_chars(s) for s in sc),
+            "target_total": len(sc) * SCENE_TARGET_CHARS}
+
+
+def check_scene_length(text: str, h: dict, seq_no: int) -> dict:
+    """씬리스트 씬(하위 씬 포함 블록)마다 본문 글자 수를 세어 최소 분량 미달을 뽑는다."""
+    parsed = parse_scenes(text)
+    got = {}
+    for s in parsed:
+        got[s["no"]] = got.get(s["no"], 0) + _body_len(s["body"])
+    short = []
+    for e in get_seq_scenes(h, seq_no):
+        n = int(e["no"])
+        if n not in got:
+            continue
+        m = scene_min_chars(e)
+        if got[n] < m:
+            short.append({"no": n, "got": got[n], "min": m, "summary": e.get("summary", ""),
+                          "mode": e.get("dialogue_mode", "")})
+    tgt = sequence_length_target(h, seq_no)
+    return {"seq": seq_no, "total": sum(got.values()), "short": short,
+            "min_total": tgt["min_total"], "target_total": tgt["target_total"], "scenes": tgt["scenes"]}
+
+
+def format_length_report(rep: dict) -> str:
+    head = (f"분량: {rep['total']:,}자 / 목표 {rep['target_total']:,}자 (최소 {rep['min_total']:,}자) · "
+            f"최소 분량 미달 {len(rep['short'])}씬")
+    lines = [head]
+    for s in rep["short"]:
+        lines.append(f"  S#{s['no']} {s['got']}자 / 최소 {s['min']}자 — {s['summary'][:50]}")
+    return "\n".join(lines)
+
+
+def length_fix_instruction(item: dict) -> str:
+    """씬 다시 쓰기용 — 분량 보강 지시. 빈 지문이 아니라 사건의 단계로 늘린다."""
+    return (f"[분량 보강 — S#{item['no']} 현재 {item['got']}자 → 최소 {item['min']}자, 목표 {SCENE_TARGET_CHARS}자 안팎]\n"
+            f"이 씬의 '내용': {item['summary']}\n"
+            "늘리는 방법 — 이 사건을 단계로 나눠 화면에 보여라: 인물이 원하는 것을 시도한다 → 무엇이 막는다 →\n"
+            "다른 방법을 쓴다 → 결과로 무언가가 바뀐다. 각 단계는 소품·위치·정보 중 하나를 바꾸는 행동과 대사로 쓴다.\n"
+            "금지 — 빈 반응 지문(A40: 입 여닫기·멈춘다·보기만 하는 문장), 감정 설명, 풍경 나열로 늘리지 않는다.\n"
+            "금지 — 씬리스트에 없는 사건·인물·장소를 더하지 않는다. 대사 방식이 '행동'이면 대사를 늘리지 말고 행동 단계를 늘린다.")
+
+
+# ═══════════════════════════════════════════════════════════
+# 11. ★ v4.3.0 — 씬리스트 사전 점검 (Creator 잠금본 안전망)
+#    Writer는 씬리스트를 바꾸지 않는다. 집필 전에 작가에게 보여줄 뿐이다.
+#    판정은 요약 문장 기반 1차 검출 — 최종 판단은 작가.
+# ═══════════════════════════════════════════════════════════
+
+_DEATH_RE = re.compile(r"죽고|죽는다|죽었|죽어\s|죽인다|숨진다|숨을 거둔|숨이 끊|사망|미라처럼|재처럼\s*부스러|재가 된다")
+_DEAD_OK_RE = re.compile(r"회상|시신|혼|영정|환영|형체|사진|무덤|장례|기억|꿈")
+_CROSS_SUM_RE = re.compile(r"들어간다|들어가|들어선다|나와|나온다|나간다|이동하던|이동한다|돌아오다|돌아온다|빠져나")
+_FLASH_RE = re.compile(r"회상")
+_YEAR_RE = re.compile(r"\d{4}년|\d+년\s*전")
+_SUM_STOP = {"응우옛", "하고", "하며", "하자", "하는", "한다", "있다", "없다", "그리고", "다시", "순간", "앞에서", "위에", "속에서"}
+
+
+def _sum_tokens(s: str, names: list) -> set:
+    w = re.findall(r"[가-힣0-9]{2,}", s or "")
+    w = [re.sub(r"(을|를|이|가|은|는|에서|에게|으로|로|와|과|의|도|만|에)$", "", x) for x in w]
+    stop = _SUM_STOP | {n for n in names if n}
+    return {x for x in w if len(x) >= 2 and x not in stop}
+
+
+def _trigrams(s: str) -> set:
+    t = re.sub(r"\s+", "", s or "")
+    return {t[i:i + 3] for i in range(len(t) - 2)}
+
+
+def _main_names(h: dict) -> list:
+    names = set()
+    for key in ("character_voice", "character_core"):
+        for c in h.get(key) or []:
+            n = normalize_name((c or {}).get("name", ""))
+            if n:
+                names.add(n)
+    for s in h.get("scenes") or []:
+        for c in s.get("characters") or []:
+            n = normalize_name(c)
+            if n:
+                names.add(n)
+    return sorted(names, key=len, reverse=True)
+
+
+def precheck_scene_list(h: dict) -> dict:
+    """잠긴 씬리스트를 집필 전에 점검한다.
+    dead_reappear — 사망 표지 이후 회상·시신 표지 없이 다시 등장하는 인물
+    duplicates    — 같은 사건으로 보이는 씬 쌍 (요약 유사도, 회상은 같은 연도·'N년 전')
+    fillers       — 이름 있는 인물이 없고 앞뒤가 같은 공간인 끼움 씬
+    crossings     — 요약 한 줄 안에서 공간을 넘나드는 씬"""
+    scenes = [s for s in (h.get("scenes") or []) if isinstance(s, dict)]
+    names = _main_names(h)
+    out = {"dead_reappear": [], "duplicates": [], "fillers": [], "crossings": []}
+
+    # 1) 퇴장 인물 재등장
+    #   사망한 인물 판정: ① 'X의 시신' ② 사망 표지 뒤 관형형('쪼그라든 X') ③ 사망 표지 바로 앞 25자 안의 가장 가까운 이름
+    #   재등장 예외: 그 씬이 회상이거나, 'X의 시신·혼·영정·사진·환영·형체'처럼 죽은 상태로 나올 때
+    dead_at = {}
+    for s in scenes:
+        summ = s.get("summary", "") or ""
+        no = int(s.get("no", 0))
+        present = [normalize_name(c) for c in (s.get("characters") or [])]
+        for nm, at in dead_at.items():
+            if nm in present and no > at and not _FLASH_RE.search(summ) and \
+                    not re.search(re.escape(nm) + r"의\s*(?:시신|혼|영정|사진|환영|형체|무덤|유품)", summ):
+                out["dead_reappear"].append({"name": nm, "dead_at": at, "no": no, "summary": summ})
+        if _FLASH_RE.search(summ):
+            continue
+        found = set()
+        for nm in names:
+            if re.search(re.escape(nm) + r"의\s*시신", summ):
+                found.add(nm)
+        for m in _DEATH_RE.finditer(summ):
+            after = summ[m.end():m.end() + 20]
+            am = re.match(r"\s*\S*[든된]\s+(.+)", after)
+            hit = ""
+            if am:
+                hit = next((nm for nm in names if am.group(1).startswith(nm)), "")
+            if not hit:
+                window = summ[max(0, m.start() - 25):m.start()]
+                pos = -1
+                for nm in names:
+                    p = window.rfind(nm)
+                    if p > pos:
+                        hit, pos = nm, p
+            if hit:
+                found.add(hit)
+        for nm in found:
+            dead_at.setdefault(nm, no)
+
+    # 2) 중복 의심
+    for i, a in enumerate(scenes):
+        for b in scenes[i + 2:]:      # 바로 붙은 씬은 연속 장면일 수 있어 제외
+            sa, sb = a.get("summary", ""), b.get("summary", "")
+            fa, fb = bool(_FLASH_RE.search(sa)), bool(_FLASH_RE.search(sb))
+            reason = ""
+            if fa and fb:
+                ya, yb = set(_YEAR_RE.findall(sa)), set(_YEAR_RE.findall(sb))
+                if ya & yb:
+                    reason = f"같은 과거 회상 ({', '.join(sorted(ya & yb))})"
+            if not reason:
+                ta, tb = _sum_tokens(sa, names), _sum_tokens(sb, names)
+                j = len(ta & tb) / max(1, len(ta | tb))
+                g = len(_trigrams(sa) & _trigrams(sb)) / max(1, len(_trigrams(sa) | _trigrams(sb)))
+                if g >= 0.15 or j >= 0.30:
+                    reason = f"요약 겹침 ({', '.join(sorted(ta & tb)[:5])})"
+            if reason:
+                out["duplicates"].append({"a": int(a["no"]), "b": int(b["no"]), "reason": reason,
+                                          "sa": sa, "sb": sb})
+
+    # 3) 끼움 씬 (이름 있는 인물 없음 + 앞뒤 씬이 같은 공간)
+    def _key(s):
+        return ((s.get("int_ext") or "").upper(), _norm_place(s.get("location", "")))
+    for k in range(1, len(scenes) - 1):
+        s = scenes[k]
+        named = [c for c in (s.get("characters") or []) if normalize_name(c) in names]
+        if named:
+            continue
+        if _key(scenes[k - 1]) == _key(scenes[k + 1]):
+            out["fillers"].append({"no": int(s["no"]), "location": s.get("location", ""),
+                                   "between": f"{scenes[k - 1].get('location', '')}", "summary": s.get("summary", "")})
+
+    # 4) 요약 안의 공간 횡단
+    for s in scenes:
+        summ = s.get("summary", "") or ""
+        m = _CROSS_SUM_RE.search(summ)
+        if m and not _FLASH_RE.search(summ):
+            out["crossings"].append({"no": int(s["no"]), "word": m.group(0), "heading": format_heading(s),
+                                     "summary": summ})
+    return out
+
+
+def precheck_counts(rep: dict) -> int:
+    return sum(len(rep.get(k) or []) for k in ("dead_reappear", "duplicates", "fillers", "crossings"))
+
+
+def format_precheck_report(rep: dict) -> str:
+    L = []
+    if rep["dead_reappear"]:
+        by = {}
+        for x in rep["dead_reappear"]:
+            by.setdefault((x["name"], x["dead_at"]), []).append(x["no"])
+        L.append("■ 퇴장 인물 재등장 (사망 표지 이후 등장)")
+        L += [f"  {nm} — S#{at}에서 사망 표지 → S#{', S#'.join(map(str, nos))}에 다시 등장" for (nm, at), nos in by.items()]
+    if rep["duplicates"]:
+        L.append("■ 중복 의심 (같은 사건·같은 회상)")
+        L += [f"  S#{x['a']} ↔ S#{x['b']} — {x['reason']}" for x in rep["duplicates"]]
+    if rep["fillers"]:
+        L.append("■ 끼움 씬 (이름 있는 인물 없음 · 앞뒤가 같은 공간)")
+        L += [f"  S#{x['no']} {x['location']} — {x['summary'][:45]}" for x in rep["fillers"]]
+    if rep["crossings"]:
+        L.append("■ 요약 한 줄 안에서 공간 이동 (집필 시 하위 씬으로 나뉠 수 있음)")
+        L += [f"  S#{x['no']} '{x['word']}' — {x['heading']}" for x in rep["crossings"]]
+    return "\n".join(L) if L else "이상 없음"
