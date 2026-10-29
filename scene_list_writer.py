@@ -1,7 +1,22 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS Story Engine — Scene List Writer Pack v1.2.0
+# BLUE JEANS Story Engine — Scene List Writer Pack v1.3.0
 # scene_list_writer.py — 씬리스트 기준 집필 레이어 (로더 + 파이썬 검증)
 # © 2026 BLUE JEANS PICTURES
+#
+# v1.3.0 (2026-10-29) — Writer Engine v4.4.0 (Creator v2.10.0·v2.10.1 인계 수신)
+# - 로더: writer_handoff_v28.scene_list_report → h["scene_list_report"] (없으면 {}).
+#   씬 항목의 info · function · event_ref는 이미 scenes에 그대로 들어 있다 (읽는 함수만 추가).
+# - 〔 〕 작가 지시: scene_directives() / check_directive_leak() / check_marked_repeats().
+#   ★ Creator 코드 대조 — dedupe_summary_quotes()가 번호를 다시 매기기 전에 지시를 남겨,
+#     합치기가 일어나면 〔S#N…〕의 N이 실제 씬과 어긋난다. 그래서 N을 찾아가지 않고,
+#     지시가 있는 씬에는 그 앞 씬 요약에 남은 대사(따옴표 원문)를 함께 넘긴다 (prior_summary_quotes).
+# - 합친 씬: merged_event_count() — 요약의 '…다 → …'만 합친 사건으로 센다
+#   ('두 번째 → 네 번째 구멍' 같은 진행 표기는 제외). 최소·목표 분량 = 기본 × 사건 수 (최대 3배).
+#   verify_against_scene_list: 합친 씬에 하위 씬이 붙으면 '합친 씬 분할'.
+# - info: known_info_lines() — 그 씬보다 앞선 씬의 info. 30줄을 넘으면 최근 30줄 + 등장인물 언급 줄.
+# - function: scene_function() / FUNCTION_GUIDE. event_ref: scene_event_refs() (화면 표시만).
+# - format_scene_line(): 기능 · 처음 드러나는 정보 · 사건 번호 줄 추가 (값이 있을 때만).
+# - 새 키가 없는 구버전 씬리스트는 모든 함수가 v1.2.0과 같은 값을 돌려준다.
 #
 # v1.2.0 (2026-10-25) — Writer Engine v4.3.0
 # - check_scene_length() / sequence_length_target() / length_fix_instruction(): 씬별 최소 분량(600자, 인물 없는 씬 400자).
@@ -40,8 +55,8 @@ import re
 import copy
 
 MODULE_NAME = "BLUE JEANS Story Engine — Scene List Writer Pack"
-MODULE_VERSION = "v1.2.0"
-MODULE_BUILD_DATE = "2026-10-25"
+MODULE_VERSION = "v1.3.0"
+MODULE_BUILD_DATE = "2026-10-29"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -118,6 +133,8 @@ def load_scene_list_handoff(creator_json: dict) -> dict:
         "state_axes": copy.deepcopy(handoff.get("state_axes") or {}),
         "dialogue_modes": copy.deepcopy(handoff.get("dialogue_modes") or {}),
         "speech_registers": copy.deepcopy(handoff.get("speech_registers") or {}),
+        # ★ v1.3.0 — Creator v2.10.0 C-7 씬리스트 보고. 없거나 {}면 Writer 자체 사전 점검.
+        "scene_list_report": copy.deepcopy(handoff.get("scene_list_report") or {}),
     })
     return out
 
@@ -254,10 +271,21 @@ def format_heading(scene: dict) -> str:
 
 def format_scene_line(scene: dict) -> str:
     chars = ", ".join(normalize_name(c) for c in scene.get("characters", [])) or "-"
-    return (f"{format_heading(scene)}\n"
-            f"   · 등장: {chars}\n"
-            f"   · 대사 방식: {scene.get('dialogue_mode') or '서브텍스트'}\n"
-            f"   · 내용: {scene.get('summary', '')}")
+    out = (f"{format_heading(scene)}\n"
+           f"   · 등장: {chars}\n"
+           f"   · 대사 방식: {scene.get('dialogue_mode') or '서브텍스트'}\n"
+           f"   · 내용: {scene.get('summary', '')}")
+    # ★ v1.3.0 — Creator v2.10.x 칸 (값이 없으면 줄을 넣지 않는다)
+    fn = scene_function(scene)
+    if fn:
+        out += f"\n   · 기능: {fn}"
+    info = scene_info(scene)
+    if info:
+        out += f"\n   · 처음 드러나는 정보: {info}"
+    refs = scene_event_refs(scene)
+    if refs:
+        out += f"\n   · 사건 번호: {', '.join(refs)}"
+    return out
 
 
 # ═══════════════════════════════════════════════════════════
@@ -497,6 +525,10 @@ def verify_against_scene_list(text: str, h: dict, seq_no: int) -> dict:
             elif not prev or prev["no"] != no:
                 issues.append({"no": no, "type": "하위 씬 위치",
                                "detail": f"S#{no}-{a['sub']}가 S#{no} 바로 뒤에 있지 않음 — {a['heading']}"})
+            elif merged_event_count(exp_by_no[no]) > 1:
+                # ★ v1.3.0 — Creator가 한 씬으로 합친 씬은 헤딩 하나로 쓴다 (A42)
+                issues.append({"no": no, "type": "합친 씬 분할",
+                               "detail": f"S#{no}-{a['sub']} — 합친 씬(사건 {merged_event_count(exp_by_no[no])}개)은 헤딩 하나로 쓴다"})
             elif _place_ok(prev["location"], a["location"]) and prev["int_ext"] == a["int_ext"]:
                 issues.append({"no": no, "type": "같은 공간 쪼개기",
                                "detail": f"S#{no}-{a['sub']}가 앞 씬과 같은 공간 '{a['location']}' — 공간이 바뀔 때만 나눈다"})
@@ -855,15 +887,27 @@ def _body_len(body: str) -> int:
     return len(re.sub(r"\s+", " ", body or "").strip())
 
 
+MERGED_MULT_MAX = 3            # ★ v1.3.0 — 합친 씬 분량 배수 상한 (사건 4개 이상도 3배까지)
+
+
+def _merged_mult(scene: dict) -> int:
+    return max(1, min(merged_event_count(scene), MERGED_MULT_MAX))
+
+
 def scene_min_chars(scene: dict) -> int:
     chars = [c for c in (scene.get("characters") or []) if str(c).strip()]
-    return SCENE_MIN_CHARS if chars else SCENE_MIN_CHARS_NOCHAR
+    base = SCENE_MIN_CHARS if chars else SCENE_MIN_CHARS_NOCHAR
+    return base * _merged_mult(scene)   # ★ v1.3.0 — 합친 씬은 사건 수만큼 (최대 3배)
+
+
+def scene_target_chars(scene: dict) -> int:
+    return SCENE_TARGET_CHARS * _merged_mult(scene)
 
 
 def sequence_length_target(h: dict, seq_no: int) -> dict:
     sc = get_seq_scenes(h, seq_no)
     return {"scenes": len(sc), "min_total": sum(scene_min_chars(s) for s in sc),
-            "target_total": len(sc) * SCENE_TARGET_CHARS}
+            "target_total": sum(scene_target_chars(s) for s in sc)}
 
 
 def check_scene_length(text: str, h: dict, seq_no: int) -> dict:
@@ -880,7 +924,8 @@ def check_scene_length(text: str, h: dict, seq_no: int) -> dict:
         m = scene_min_chars(e)
         if got[n] < m:
             short.append({"no": n, "got": got[n], "min": m, "summary": e.get("summary", ""),
-                          "mode": e.get("dialogue_mode", "")})
+                          "mode": e.get("dialogue_mode", ""), "target": scene_target_chars(e),
+                          "events": merged_event_count(e)})
     tgt = sequence_length_target(h, seq_no)
     return {"seq": seq_no, "total": sum(got.values()), "short": short,
             "min_total": tgt["min_total"], "target_total": tgt["target_total"], "scenes": tgt["scenes"]}
@@ -897,8 +942,13 @@ def format_length_report(rep: dict) -> str:
 
 def length_fix_instruction(item: dict) -> str:
     """씬 다시 쓰기용 — 분량 보강 지시. 빈 지문이 아니라 사건의 단계로 늘린다."""
-    return (f"[분량 보강 — S#{item['no']} 현재 {item['got']}자 → 최소 {item['min']}자, 목표 {SCENE_TARGET_CHARS}자 안팎]\n"
-            f"이 씬의 '내용': {item['summary']}\n"
+    head = (f"[분량 보강 — S#{item['no']} 현재 {item['got']}자 → 최소 {item['min']}자, "
+            f"목표 {item.get('target', SCENE_TARGET_CHARS)}자 안팎]\n"
+            f"이 씬의 '내용': {item['summary']}\n")
+    if item.get("events", 1) > 1:   # ★ v1.3.0 — 합친 씬
+        head += (f"이 씬은 사건 {item['events']}개를 합친 한 씬이다. → 로 이어진 사건을 순서대로 모두 쓰고, "
+                 "헤딩은 하나로 둔다 (하위 씬으로 나누지 않는다).\n")
+    return (head +
             "늘리는 방법 — 이 사건을 단계로 나눠 화면에 보여라: 인물이 원하는 것을 시도한다 → 무엇이 막는다 →\n"
             "다른 방법을 쓴다 → 결과로 무언가가 바뀐다. 각 단계는 소품·위치·정보 중 하나를 바꾸는 행동과 대사로 쓴다.\n"
             "금지 — 빈 반응 지문(A40: 입 여닫기·멈춘다·보기만 하는 문장), 감정 설명, 풍경 나열로 늘리지 않는다.\n"
@@ -1056,3 +1106,199 @@ def format_precheck_report(rep: dict) -> str:
         L.append("■ 요약 한 줄 안에서 공간 이동 (집필 시 하위 씬으로 나뉠 수 있음)")
         L += [f"  S#{x['no']} '{x['word']}' — {x['heading']}" for x in rep["crossings"]]
     return "\n".join(L) if L else "이상 없음"
+
+
+# ═══════════════════════════════════════════════════════════
+# 12. ★ v1.3.0 (Writer v4.4.0) — Creator v2.10.0·v2.10.1 인계 데이터
+#    씬 항목: info(관객이 처음 아는 정보) · function(사건/준비/여파/교차/회상) · event_ref(B6-E…)
+#    요약 안: 〔S#61과 같은 말 — 다시 말하지 않는다〕(작가 지시) · 합친 씬 '(하위 공간) …다 → …'
+#    보고: writer_handoff_v28.scene_list_report
+# ═══════════════════════════════════════════════════════════
+
+DIRECTIVE_RE = re.compile(r"〔[^〔〕]*〕")
+_DIRECTIVE_CHAR_RE = re.compile(r"[〔〕]")
+# Creator merge_two_scenes: f"{앞 요약(마침표 뗌)} → {뒤 요약}". 앞 요약은 동사로 끝난다('…꺼낸다 →').
+# '두 번째 → 네 번째 구멍' 같은 요약 속 진행 표기는 '다'로 끝나지 않으므로 세지 않는다.
+_MERGE_ARROW_RE = re.compile(r"다[.。]?[’”\"']?\s*→")
+_SUBSPACE_RE = re.compile(r"(?:^|→)\s*\(([^()]{1,30})\)")
+_SUM_QUOTE_RE = re.compile(r"['‘“\"]([^'’”\"]{2,80})['’”\"]")      # Creator _QUOTE_RE와 같은 기준
+_QW_STOP = set("한다 했다 한다고 있다 없다 된다 해야 하는 하고 이다 같다 아니야 거야 이거 그거 저거 "
+               "내가 나도 너도 우리 정말 지금 이제 그냥 여기 거기 말해 알아 몰라 이렇게 그렇게".split())
+
+SCENE_FUNCTIONS = ("사건", "준비", "여파", "교차", "회상")
+FUNCTION_GUIDE = {
+    "사건": "이 씬에 분량을 싣는다. 시퀀스의 무게가 여기 있다 — 목표 분량 이상으로 쓴다.",
+    "준비": "사건 씬보다 짧게 (최소 분량은 지킨다). 다음 사건 씬에서 일어날 일을 미리 보여주지 않는다.",
+    "여파": "사건 씬보다 짧게 (최소 분량은 지킨다). 앞에서 일어난 사건을 다시 보여주거나 다시 말하지 않는다 — 그 뒤 달라진 상태만.",
+    "교차": "짧고 빠르게 (최소 분량은 지킨다). 다른 장소에서 동시에 진행되는 일만 보여준다. 앞뒤 씬의 사건을 여기서 설명하지 않는다.",
+    "회상": "헤딩 시간 뒤에 (회상)을 붙인다 — 예: S#12. EXT. 리 가문 사당 — 밤 (회상). 같은 과거를 두 번 보여주지 않는다. 회상 안은 현재형.",
+}
+KNOWN_INFO_MAX = 30
+
+
+def scene_directives(scene: dict) -> list:
+    """요약 안의 〔 〕 작가 지시 목록."""
+    return DIRECTIVE_RE.findall(str((scene or {}).get("summary", "") or ""))
+
+
+def merged_event_count(scene: dict) -> int:
+    """Creator가 합친 씬의 사건 수. 합친 씬이 아니면 1."""
+    return 1 + len(_MERGE_ARROW_RE.findall(str((scene or {}).get("summary", "") or "")))
+
+
+def merged_subspaces(scene: dict) -> list:
+    """합친 씬 요약의 (하위 공간) 표기. 합친 씬이 아니면 []."""
+    if merged_event_count(scene) <= 1:
+        return []
+    return [x.strip() for x in _SUBSPACE_RE.findall(str(scene.get("summary", "") or ""))]
+
+
+def scene_function(scene: dict) -> str:
+    v = str((scene or {}).get("function", "") or "").strip()
+    return v if v in SCENE_FUNCTIONS else ""
+
+
+def scene_info(scene: dict) -> str:
+    return str((scene or {}).get("info", "") or "").strip()
+
+
+def scene_event_refs(scene: dict) -> list:
+    v = (scene or {}).get("event_ref")
+    if isinstance(v, str):
+        v = [v]
+    return [str(x).strip() for x in (v or []) if str(x).strip()]
+
+
+def _scene_no(s) -> int:
+    try:
+        return int((s or {}).get("no", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def known_info_lines(h: dict, before_no: int, names: list = None, limit: int = KNOWN_INFO_MAX) -> list:
+    """before_no보다 앞선 씬의 info → ['S#16 리 가문의 피가 …', …] (씬 번호 순).
+    limit줄을 넘으면 최근 limit줄 + names(이 씬·시퀀스 등장인물)가 언급된 줄만 남긴다."""
+    rows = [(_scene_no(s), scene_info(s)) for s in (h.get("scenes") or [])
+            if isinstance(s, dict) and _scene_no(s) < int(before_no) and scene_info(s)]
+    rows.sort(key=lambda x: x[0])
+    if len(rows) > limit:
+        recent = set(range(len(rows) - limit, len(rows)))
+        nm = [normalize_name(n) for n in (names or []) if normalize_name(n)]
+        rows = [r for i, r in enumerate(rows) if i in recent or any(n in r[1] for n in nm)]
+    return [f"S#{n} {t}" for n, t in rows]
+
+
+def prior_summary_quotes(h: dict, before_no: int, limit: int = 12) -> list:
+    """before_no보다 앞선 씬 요약에 남은 대사(따옴표 원문). [(씬 번호, 대사)] — 최근 limit개.
+    〔S#N과 같은 말〕의 N은 Creator 번호 재부여 전 값일 수 있어, 번호 대신 이 목록을 넘긴다."""
+    out = []
+    for s in sorted((x for x in (h.get("scenes") or []) if isinstance(x, dict)), key=_scene_no):
+        if _scene_no(s) >= int(before_no):
+            break
+        for q in _SUM_QUOTE_RE.findall(str(s.get("summary", "") or "")):
+            out.append((_scene_no(s), q.strip()))
+    return out[-limit:]
+
+
+def _quote_words(q: str) -> set:
+    ws = {re.sub(r"(은|는|이|가|을|를|의|에|에게|도|만|이야|아니야|같다|이다)$", "", w)
+          for w in re.findall(r"[가-힣]{2,}", q or "")}
+    return {w for w in ws if len(w) >= 2 and w not in _QW_STOP}
+
+
+def _same_quote(wa: set, wb: set) -> bool:
+    """Creator _same_quote와 같은 기준 — 겹치는 낱말 2개 이상 · 짧은 쪽의 절반 이상."""
+    common = wa & wb
+    return len(common) >= 2 and len(common) >= 0.5 * min(len(wa), len(wb))
+
+
+def check_directive_leak(text: str) -> list:
+    """원고에 〔 또는 〕가 남은 줄. [{no, label, line}] — 씬 번호와 함께 표시, 재작성 대상."""
+    out = []
+    for sc in parse_scenes(text):
+        label = f"S#{sc['no']}" + (f"-{sc['sub']}" if sc.get("sub") else "")
+        for ln in [sc["heading"]] + sc["body"].split("\n"):
+            if _DIRECTIVE_CHAR_RE.search(ln):
+                out.append({"no": sc["no"], "label": label, "line": ln.strip()[:80]})
+    return out
+
+
+def check_marked_repeats(text: str, h: dict, seq_no: int) -> list:
+    """〔 〕 지시가 있는 씬의 대사가 앞 씬 요약의 대사(따옴표 원문)와 같은 말인지 — 1차 검출.
+    [{no, label, line, quote, quote_no}]"""
+    marked = {int(s["no"]) for s in get_seq_scenes(h, seq_no) if scene_directives(s)}
+    if not marked:
+        return []
+    out = []
+    for sc in parse_scenes(text):
+        if sc["no"] not in marked:
+            continue
+        prior = [(n, q, _quote_words(q)) for n, q in prior_summary_quotes(h, sc["no"], limit=999)]
+        if not prior:
+            continue
+        label = f"S#{sc['no']}" + (f"-{sc['sub']}" if sc.get("sub") else "")
+        for ln in sc["body"].split("\n"):
+            m = _DIALOGUE_RE.match(ln)
+            if not m:
+                continue
+            w = _quote_words(_PAREN_RE.sub("", m.group(2)))
+            hit = next(((n, q) for n, q, pw in prior if w and _same_quote(w, pw)), None)
+            if hit:
+                out.append({"no": sc["no"], "label": label, "line": ln.strip()[:80],
+                            "quote": hit[1], "quote_no": hit[0]})
+    return out
+
+
+def format_directive_report(leaks: list, repeats: list) -> str:
+    L = []
+    if leaks:
+        L.append(f"〔 〕 작가 지시가 원고에 남음 {len(leaks)}줄 — 지시는 원고에 옮겨 쓰지 않는다 (A41)")
+        L += [f"  {x['label']}  {x['line']}" for x in leaks]
+    if repeats:
+        L.append(f"앞 씬에서 이미 한 말을 다시 함 {len(repeats)}줄 (1차 검출 · 최종 판단은 작가)")
+        L += [f"  {x['label']}  {x['line']}  ← S#{x['quote_no']} 요약 “{x['quote'][:30]}”" for x in repeats]
+    return "\n".join(L) if L else "〔 〕 지시 이상 없음"
+
+
+def directive_fix_instruction(leaks: list, repeats: list) -> str:
+    """씬 다시 쓰기용 — 〔 〕 누출·반복 대사만 고치는 지시."""
+    L = ["[A41 작가 지시 정리 — 이 지시만 수행한다. 다른 문장은 그대로 둔다]"]
+    for x in leaks:
+        L.append(f"- '{x['line']}' — 〔 〕는 작가 지시다. 원고에서 지우고, 그 자리를 행동이나 다른 정보로 채운다.")
+    for x in repeats:
+        L.append(f"- '{x['line']}' — 앞 씬에서 이미 한 말(“{x['quote'][:40]}”)이다. "
+                 "같은 뜻을 다른 말로 바꾸는 것도 하지 않는다. 대사를 지우고 행동이나 새 정보로 바꾼다.")
+    return "\n".join(L)
+
+
+# ── 씬리스트 보고 (Creator v2.10.0 C-7) ──
+
+def scene_list_report(h: dict) -> dict:
+    r = (h or {}).get("scene_list_report")
+    return r if isinstance(r, dict) else {}
+
+
+def has_scene_list_report(h: dict) -> bool:
+    """보고가 있으면 Creator 경고를 우선 표시하고 Writer 자체 사전 점검은 돌리지 않는다."""
+    r = scene_list_report(h)
+    return bool(r) and ("locked_total" in r or "warnings" in r)
+
+
+def report_warning_count(h: dict) -> int:
+    return len(scene_list_report(h).get("warnings") or [])
+
+
+def format_report_head(h: dict) -> list:
+    """['씬리스트 예산 99씬 · 잠금 82씬', 'SEQ 1 11→6 · SEQ 6 12→5 · …'] — 예산과 잠금 수가 다른 시퀀스만."""
+    r = scene_list_report(h)
+    if not r:
+        return []
+    lines = [f"씬리스트 예산 {r.get('budget_total', '-')}씬 · 잠금 {r.get('locked_total', '-')}씬"]
+    diffs = []
+    for x in r.get("per_seq") or []:
+        if isinstance(x, dict) and x.get("budget") != x.get("locked"):
+            diffs.append(f"SEQ {x.get('seq')} {x.get('budget')}→{x.get('locked')}")
+    if diffs:
+        lines.append(" · ".join(diffs))
+    return lines

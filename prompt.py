@@ -1,7 +1,30 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS SCREENPLAY WRITER ENGINE v4.3.0
-# prompt.py — Full Version (Creator Engine v2.9.2 동기화)
+# BLUE JEANS SCREENPLAY WRITER ENGINE v4.4.0
+# prompt.py — Full Version (Creator Engine v2.10.1 동기화)
 # © 2026 BLUE JEANS PICTURES
+#
+# v4.4.0 주요 변경사항 (2026-10-29) — Creator v2.10.0·v2.10.1 인계 수신 · 대사 반복 차단 · 합친 씬
+# - 근거: Creator v2.10.1 「Writer Engine 업그레이드 요청서 v4.4.0」(GitHub main f187c68).
+#   Mr. MOON 지적 "대사 반복도 너무 많고." — 「THE CRIMSON ROBE」에서 리 가문 피의 규칙을
+#   S#16·19·42에서 다시 설명, S#61의 말을 S#77에서 다시 외침.
+#   v4.3.0은 Creator가 새로 넘기는 info·function·event_ref·scene_list_report를 읽기만 하고 쓰지 않았다.
+# - A41 작가 지시 〔 〕 (W-1): 〔 〕는 원고에 옮기지 않는다. 〔S#N과 같은 말〕이면 그 말도, 같은 뜻의 다른 말도 하지 않는다.
+#   ★ Creator 코드 대조 결과 — dedupe_summary_quotes()가 번호 재부여 전에 지시를 남겨, 합치기가 일어나면
+#     〔S#N〕의 N이 실제 씬과 어긋난다(시험 데이터에서 재현: 지시 S#5 ↔ 실제 S#4).
+#     그래서 N을 찾아가지 않고, 지시가 있는 씬 블록에 [앞 씬에서 이미 나온 말](앞 씬 요약의 따옴표 원문)을 붙인다.
+# - A42 합친 씬 (W-2): 요약의 '…다 → …'를 합친 사건으로 센다('두 번째 → 네 번째' 같은 진행 표기는 제외).
+#   헤딩 하나 · → 순서대로 모두 · (하위 공간)은 지문으로 이동 · 하위 씬 금지. 최소·목표 분량 = 기본 × 사건 수(최대 3배).
+#   v4.2.0 '같은 공간 쪼개기' 점검은 그대로 두고, 합친 씬에 하위 씬이 붙으면 '합친 씬 분할'로 따로 잡는다.
+# - A43 관객이 이미 아는 정보 (W-3): 그 시퀀스(씬)보다 앞선 씬의 info를 [관객이 이미 아는 정보]로 주입.
+#   30줄을 넘으면 최근 30줄 + 등장인물이 언급된 줄. 씬 블록에 '처음 드러나는 정보'(그 씬의 info).
+#   ※ 요청서의 'A33(verbatim 반복)·A34(concrete evasion)와 같은 단계'는 Writer 번호와 다르다
+#     (Writer A33 = 클라이맥스 사건화, A34 = 서브텍스트). A43은 씬 정보가 있는 씬리스트 집필 프롬프트에 둔다.
+# - A44 씬 기능 (W-4): 사건 · 준비 · 여파 · 교차 · 회상 기준. '짧게'는 v4.3.0 최소 분량 안에서.
+#   회상 헤딩 = 시간 뒤 (회상) — 예: S#12. EXT. 리 가문 사당 — 밤 (회상). 기존 씬리스트 대조를 통과한다.
+# - W-5·W-6은 화면(main.py)·scene_list_writer v1.3.0 몫. prompt.py에는 event_ref를 넣지 않는다.
+# - 호환: A41~A44와 정보 블록은 해당 데이터가 그 시퀀스(씬)에 있을 때만 들어간다.
+#   새 키가 없는 구버전 JSON은 v4.3.0과 프롬프트가 한 글자도 같다 (시퀀스·씬 재집필 16개 출력 대조).
+#   scene_list_writer.py가 v1.2.0이면(_v44_ok False) v4.3.0과 같이 동작. 함수 시그니처 변경 없음.
 #
 # v4.3.0 주요 변경사항 (2026-10-25) — 분량 기준 · 씬리스트 사전 점검
 # - 실측 (「THE CRIMSON ROBE」 82씬): 41,222자, 씬당 평균 502자, 58씬이 600자 미만.
@@ -798,8 +821,8 @@
 # - Creator JSON 자동 로더
 # ─────────────────────────────────────────────────────────────
 
-ENGINE_VERSION = "v4.3.0"
-ENGINE_BUILD_DATE = "2026-10-25"
+ENGINE_VERSION = "v4.4.0"
+ENGINE_BUILD_DATE = "2026-10-29"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -9760,6 +9783,168 @@ A40. 빈 반응 지문 금지 — Dead Beat Ban (전 모드 · v4.2.0)
 """.strip()
 
 
+# ═══════════════════════════════════════════════════════════
+# ★ v4.4.0 신규 — Creator v2.10.0·v2.10.1 인계 수신 (씬리스트 모드 전용)
+# A41 〔 〕 작가 지시 · A42 합친 씬 · A43 관객이 이미 아는 정보 · A44 씬 기능
+# 해당 데이터가 이번 시퀀스(씬)에 있을 때만 프롬프트에 넣는다.
+# 새 키가 없는 구버전 씬리스트는 v4.3.0과 프롬프트가 같다.
+# ═══════════════════════════════════════════════════════════
+
+A41_DIRECTIVE_RULE = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+A41. 작가 지시 〔 〕 — 같은 말 다시 하지 않기 (씬리스트 모드 · v4.4.0)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- 씬 내용 안의 〔 〕는 작가 지시다. 원고에 옮겨 쓰지 않는다. 〔 〕 기호도, 그 안의 문장도 원고에 나오지 않는다.
+- 〔S#N과 같은 말 — 다시 말하지 않는다〕가 있으면 앞 씬에서 이미 나온 그 말을 이 씬에서 다시 하지 않는다.
+  같은 뜻을 다른 말로 바꿔 말하는 것도 하지 않는다. 그 자리는 행동이나 다른 정보로 채운다.
+- 지시 속 S#N은 기획 단계의 번호라 지금 씬 번호와 다를 수 있다.
+  그 말이 무엇인지는 씬 블록의 [앞 씬에서 이미 나온 말] 목록에서 찾는다.
+- 내용이 "남이 〔…〕고 외치지만"처럼 말할 자리를 지시로 비워 두었으면,
+  그 인물은 같은 말을 하지 않고 몸으로 막는다. 관객은 그 인물이 무엇을 두려워하는지 이미 안다.
+
+❌ BAD — 앞 씬에서 한 말을 그대로
+남		로브를 없애면 어머니 혼은 영영 사라진다고!
+
+❌ BAD — 같은 뜻을 말만 바꿔
+남		그걸 태우면 어머니도 끝이야!
+
+✅ GOOD — 그 자리를 행동으로
+남이 응우옛의 손목을 잡아 로브에서 떼어낸다. 응우옛이 피 묻은 손바닥으로 남의 가슴을 밀어낸다.
+
+(관객은 남이 왜 막는지 이미 들었다. 두 번째로 듣는 같은 말은 정보가 아니다. 이 씬은 그 두려움이 손으로 부딪히는 것만 보여준다.)
+
+출력 후 파이썬이 원고에 남은 〔 〕와, 앞 씬 요약의 대사와 같은 말을 씬 번호와 함께 표시한다.
+""".strip()
+
+
+A42_MERGED_SCENE_RULE = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+A42. 합친 씬 — 한 장소에서 끊기지 않는 하나의 씬 (씬리스트 모드 · v4.4.0)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+씬 내용이 → 로 이어진 씬은, 기획 단계에서 같은 공간·같은 시간에 이어지는 장면을 한 씬으로 합친 것이다.
+- 이 씬은 한 장소에서 시간이 끊기지 않고 이어지는 하나의 씬이다. 헤딩 하나로 쓴다.
+- → 로 이어진 사건을 순서대로 모두 쓴다. 하나도 빼지 않는다.
+- 내용 앞(또는 → 바로 뒤)의 (하위 공간)은 같은 장소 안의 다른 자리다.
+  하위 씬(S#N-1)으로 나누지 않고 지문으로 옮겨 간다. A36의 공간 분할 의무는 이 괄호에 적용하지 않는다.
+- 사건과 사건 사이를 CUT TO·시간 경과로 끊지 않는다. 인물의 동선과 손에 든 소품이 다음 사건으로 이어 준다.
+- 분량은 사건 수만큼 늘어난다. 씬 블록의 최소 분량을 따른다.
+
+❌ BAD — 합친 씬을 다시 쪼갬
+S#2. INT. 양장점 — 낮
+니가 결혼 예복 의뢰서를 꺼낸다.
+
+
+S#2-1. INT. 양장점 뒤편 제단 — 낮
+니가 실끊개 비녀를 건넨다.
+
+✅ GOOD — 헤딩 하나, 지문으로 자리 이동
+S#2. INT. 양장점 — 낮
+양장점 뒤편 제단. 니가 향로 밑에서 결혼 예복 의뢰서를 꺼내 응우옛 앞에 편다.
+
+(대사와 행동)
+
+니가 의뢰서를 접어 쥐고 커튼을 걷어 매장으로 나온다. 재단대 서랍에서 실끊개 비녀를 꺼내 응우옛의 손에 쥐여 준다.
+
+출력 후 파이썬이 합친 씬에 붙은 하위 씬과 씬별 분량을 센다.
+""".strip()
+
+
+A43_KNOWN_INFO_RULE = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+A43. 관객이 이미 아는 정보 — 다시 설명하지 않는다 (씬리스트 모드 · v4.4.0)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- [관객이 이미 아는 정보] 목록의 정보를 대사나 지문으로 다시 설명하지 않는다.
+- 인물이 이미 아는 것을 서로에게 다시 알려주지 않는다. "알잖아", "다시 말하지만"으로 시작하는 설명도 같다.
+- 이번 시퀀스 안에서도, 앞 씬의 '처음 드러나는 정보'는 다음 씬부터 관객이 이미 아는 정보다.
+- 씬 블록에 '처음 드러나는 정보'가 있으면, 그 정보가 이 씬에서 처음 드러나게 쓴다. 앞 씬에서 미리 흘리지 않는다.
+- 이미 아는 정보는 설명하지 말고 행동의 근거로 쓴다. 인물이 그 정보를 아는 사람처럼 움직이면 된다.
+- 같은 정보를 새로 알게 되는 인물이 있으면, 그 인물이 알게 되는 순간만 보여준다. 내용을 처음부터 다시 풀지 않는다.
+
+❌ BAD — 앞 씬에서 공개된 규칙을 다시 설명
+민		리 가문의 피가 로브에 닿으면, 로브가 스스로를 무너뜨려.
+
+✅ GOOD — 아는 사람처럼 움직인다
+응우옛이 비녀 끝을 자기 손바닥에 댄다. 남이 로브를 끌어안고 문 쪽으로 물러선다.
+""".strip()
+
+
+A44_SCENE_FUNCTION_RULE = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+A44. 씬 기능 — Scene Function (씬리스트 모드 · v4.4.0)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+씬 블록의 '기능'은 이 씬이 시퀀스 안에서 맡은 일이다. 기능에 따라 분량과 쓰는 법이 달라진다.
+· 사건 — 이 씬에 분량을 싣는다. 시퀀스의 무게가 여기 있다. 목표 분량 이상으로 쓴다.
+· 준비 — 사건 씬보다 짧게. 다음 사건 씬에서 일어날 일을 미리 보여주지 않는다.
+· 여파 — 사건 씬보다 짧게. 앞에서 일어난 사건을 다시 보여주거나 다시 말하지 않는다. 그 뒤 달라진 상태만 쓴다.
+· 교차 — 짧고 빠르게. 다른 장소에서 동시에 진행되는 일만 보여준다. 앞뒤 씬의 사건을 여기서 설명하지 않는다.
+· 회상 — 헤딩 시간 뒤에 (회상)을 붙인다. 예: S#12. EXT. 리 가문 사당 — 밤 (회상)
+         같은 과거를 두 번 보여주지 않는다. 회상 안도 현재형으로 쓴다.
+'짧게'는 씬별 최소 분량(v4.3.0) 안에서의 이야기다. 최소 분량은 기능과 상관없이 지킨다.
+기능 표시가 없는 씬은 지금까지처럼 쓴다.
+""".strip()
+
+
+def _v44_ok(SLW) -> bool:
+    """scene_list_writer v1.3.0 이상인지 (prompt.py만 먼저 배포된 경우 v4.3.0 동작)."""
+    return SLW is not None and hasattr(SLW, "scene_directives") and hasattr(SLW, "known_info_lines")
+
+
+def _v44_scene_lines(SLW, handoff: dict, scene: dict) -> str:
+    """씬 블록에 붙는 v4.4.0 줄 — 기능 · 처음 드러나는 정보 · 합친 씬 · 작가 지시. 값이 없으면 빈 문자열."""
+    if not _v44_ok(SLW):
+        return ""
+    L = []
+    fn = SLW.scene_function(scene)
+    if fn:
+        L.append(f"   · 기능: {fn} — {SLW.FUNCTION_GUIDE.get(fn, '')} (A44)")
+    info = SLW.scene_info(scene)
+    if info:
+        L.append(f"   · 처음 드러나는 정보: {info} — 이 씬에서 처음 드러나게 쓴다 (A43)")
+    k = SLW.merged_event_count(scene)
+    if k > 1:
+        subs = SLW.merged_subspaces(scene)
+        L.append(f"   · 합친 씬: 사건 {k}개를 → 순서대로 · 헤딩 하나 · 하위 씬 금지 (A42)"
+                 + (f" — ({', '.join(subs)})은 같은 장소 안의 자리, 지문으로 옮겨 간다" if subs else ""))
+    dirs = SLW.scene_directives(scene)
+    if dirs:
+        L.append(f"   · 작가 지시 (A41 — 원고에 옮겨 쓰지 않는다): {' '.join(dirs)}")
+        qs = SLW.prior_summary_quotes(handoff, int(scene.get("no", 0)))
+        if qs:
+            L.append("     [앞 씬에서 이미 나온 말 — 이 씬에서 다시 하지 않는다. 같은 뜻의 다른 말도 하지 않는다]")
+            L += [f"     - S#{n} “{q}”" for n, q in qs]
+        else:
+            L.append("     [앞 씬 요약에 남은 대사 없음 — 앞 씬 원고에서 이미 나온 말을 다시 하지 않는다]")
+    return ("\n" + "\n".join(L)) if L else ""
+
+
+def _v44_prompt_blocks(SLW, handoff: dict, scenes: list, names: list) -> tuple:
+    """(룰 블록, 관객이 이미 아는 정보 블록). 해당 데이터가 없으면 둘 다 빈 문자열."""
+    if not _v44_ok(SLW) or not scenes:
+        return "", ""
+    rules = []
+    if any(SLW.scene_directives(s) for s in scenes):
+        rules.append(A41_DIRECTIVE_RULE)
+    if any(SLW.merged_event_count(s) > 1 for s in scenes):
+        rules.append(A42_MERGED_SCENE_RULE)
+    first_no = min(int(s.get("no", 0)) for s in scenes)
+    known = SLW.known_info_lines(handoff, first_no, names)
+    if known or any(SLW.scene_info(s) for s in scenes):
+        rules.append(A43_KNOWN_INFO_RULE)
+    if any(SLW.scene_function(s) for s in scenes):
+        rules.append(A44_SCENE_FUNCTION_RULE)
+    rule_block = ("\n\n" + "\n\n".join(rules)) if rules else ""
+    known_block = ""
+    if known:
+        known_block = ("\n\n[관객이 이미 아는 정보 — 다시 설명하지 않는다 (A43)]\n"
+                       + "\n".join(f"- {x}" for x in known))
+    return rule_block, known_block
+
+
+
 # 씬리스트의 대사 방식 값 → 정규 이름. 요청서 표기(간극형 등)도 받아들인다.
 DIALOGUE_MODE_ALIASES = {
     "서브텍스트": "서브텍스트", "간극": "서브텍스트", "간극형": "서브텍스트",
@@ -9811,7 +9996,8 @@ def _scene_block_for_prompt(SLW, handoff: dict, scene: dict, locked_text: str = 
     out = (f"{SLW.format_heading(scene)}\n"
            f"   · 등장: {chars}\n"
            f"   · 대사 방식: {mode_label}\n"
-           f"   · 내용: {scene.get('summary', '')}\n"
+           f"   · 내용: {scene.get('summary', '')}"
+           + _v44_scene_lines(SLW, handoff, scene) + "\n"   # ★ v4.4.0 — 값이 없으면 빈 문자열
            + (f"   · 최소 분량: {SLW.scene_min_chars(scene)}자\n" if hasattr(SLW, "scene_min_chars") else "")
            + f"   · 말투:\n{SLW.build_speech_table_for_scene(handoff, scene)}")
     if locked_text:
@@ -9936,6 +10122,8 @@ def build_write_sequence_prompt(
     voice_block = SLW.build_voice_block(handoff, names)
     core_block = SLW.build_core_block(handoff, names)
     state_block = SLW.build_state_block(handoff, q.get("beats") or [])
+    # ★ v4.4.0 — A41~A44 · 관객이 이미 아는 정보 (데이터가 없으면 빈 문자열 → v4.3.0과 같은 프롬프트)
+    v44_rules, v44_known = _v44_prompt_blocks(SLW, handoff, scenes, names)
 
     seq_head = f"시퀀스 {seq_no} / {len(seqs)}"
     if q.get("act"):
@@ -9986,7 +10174,7 @@ def build_write_sequence_prompt(
 
 {A37_DIALOGUE_MODE_RULE}
 
-{A38_SPEECH_MATRIX_RULE}
+{A38_SPEECH_MATRIX_RULE}{v44_rules}
 
 {essence_injection}
 [장르]
@@ -10002,7 +10190,7 @@ def build_write_sequence_prompt(
 [이번 시퀀스 개요 — Creator]
 {chr(10).join(story_lines) if story_lines else '  (개요 없음)'}
 
-{prev_block}
+{prev_block}{v44_known}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 [이번 시퀀스 씬리스트 — 잠금 확정본, 이대로 집필]
@@ -10132,6 +10320,8 @@ def build_rewrite_scene_prompt(
     instr = (user_instruction or "").strip() or "(지시 없음 — 씬리스트·대사 방식·말투표 기준으로 전체 강화)"
     prev_block = f"[직전 씬 — 전문]\n{prev_scene_text.strip()[:3000]}" if prev_scene_text.strip() else ""
     next_block = f"[직후 씬 — 전문. 이 씬으로 이어지게 끝내라]\n{next_scene_text.strip()[:2000]}" if next_scene_text.strip() else ""
+    # ★ v4.4.0 — 이 씬에 해당하는 A41~A44 · 이 씬보다 앞선 정보 (없으면 빈 문자열)
+    v44_rules, v44_known = _v44_prompt_blocks(SLW, handoff, [scene] if scene else [], names)
 
     _base_prompt = f"""
 [TASK] S#{scene_no} 한 씬만 다시 쓰기 — 씬리스트 모드
@@ -10143,7 +10333,7 @@ def build_rewrite_scene_prompt(
 
 {A37_DIALOGUE_MODE_RULE}
 
-{A38_SPEECH_MATRIX_RULE}
+{A38_SPEECH_MATRIX_RULE}{v44_rules}
 
 {build_genre_essence_injection(genre_essence)}
 [장르]
@@ -10151,7 +10341,7 @@ def build_rewrite_scene_prompt(
 {get_genre_override(genre)}
 
 [이 씬의 씬리스트 — 잠금 확정본]
-{_scene_block_for_prompt(SLW, handoff, scene) if scene else f'S#{scene_no} (씬리스트에서 찾지 못함 — 현재 헤딩 유지)'}
+{_scene_block_for_prompt(SLW, handoff, scene) if scene else f'S#{scene_no} (씬리스트에서 찾지 못함 — 현재 헤딩 유지)'}{v44_known}
 
 [인물 말투]
 {SLW.build_voice_block(handoff, names) or '  (없음)'}
