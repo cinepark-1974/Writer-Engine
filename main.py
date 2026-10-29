@@ -1,5 +1,13 @@
 # ─────────────────────────────────────────────────────────────
 # BLUE JEANS SCREENPLAY WRITER ENGINE — main.py
+# v4.5.0 (2026-10-29) — A45 지문 양식 (Mr. MOON 「부활」 v2.0 원고 대조)
+#   * 지문 양식 점검 패널 — 15비트(비트별)·씬리스트(시퀀스별): 정적 문장(작품 전체 1회) · 평가 문장 ·
+#     대사 예고 · 카메라 지시 · 곧은 따옴표 · 숫자 나이 · 띄어 쓴 번호 인물 · 목소리 표기. 표시만 한다.
+#   * 시퀀스 집필·씬 재집필에 other_text(나머지 원고) 전달 — 정적 문장 작품 1회 집계.
+#   * DOCX: 대사 헤더 목소리 표기 (F)·(O.S)·(V.O) 인식 → 이름에 붙여 출력 (마침표 없음).
+#     번호 붙은 인물(신도1)·가운뎃점 이름 인식. 몽타주 헤딩(S#N. 몽타주 — 제목)을 씬 헤딩으로 출력.
+#     INSERT 라벨 키워드에 '메시지' 추가.
+#   * scene_list_writer.py v1.4.0 필요 (prompt.py·main.py와 함께 교체).
 # v4.4.0 (2026-10-29) — Creator v2.10.0·v2.10.1 인계 수신 (대사 반복 차단 · 합친 씬 · 씬리스트 보고)
 #   * 씬리스트 모드 상단: Creator 씬리스트 보고 (예산·잠금 씬 수 · 예산과 다른 시퀀스 · Creator 경고/참고).
 #     보고가 있으면 Writer 자체 사전 점검을 돌리지 않는다 (같은 경고 두 번 표시 방지). 보고가 없으면 v4.3.0 그대로.
@@ -402,6 +410,7 @@ _INSERT_LABEL_KEYWORDS = [
     '신문', '잡지', '기사', '헤드라인',
     '자막',
     '알림',
+    '메시지',
     '핸드폰', '핸드폰 화면', '폰', '폰 화면', '화면',
 ]
 
@@ -1593,20 +1602,26 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
 
     # ── 본문 파싱 + 변환 ──
     # 씬 헤딩 패턴: S#숫자. INT./EXT. 또는 그냥 INT./EXT.
-    heading_re = re.compile(r'^S?#?\d*\.?\s*(INT\.|EXT\.|INT\./EXT\.)\s*(.+)', re.IGNORECASE)
+    heading_re = re.compile(r'^S?#?\d*\.?\s*(INT\.|EXT\.|INT\./EXT\.|몽타주\s*[—–-])\s*(.+)', re.IGNORECASE)
     # 캐릭터명 패턴: 2칸+ 들여쓰기 + 이름 (1~15자) + 선택적 (V.O.) / (O.S.) / (CONT'D)
+    # ★ v4.5.0 — 목소리 표기 (F)·(O.S)·(V.O) (마침표 유무 무관), 번호 붙은 인물(신도1)·가운뎃점 이름
     char_re = re.compile(
-        r'^\s{2,}([가-힣a-zA-Z\s]{1,15}?)\s*'
-        r'(?:\((V\.O\.|O\.S\.|CONT\'D|cont\'d|v\.o\.|o\.s\.)\))?\s*$',
+        r'^\s{2,}([가-힣a-zA-Z0-9·\s]{1,15}?)\s*'
+        r'(?:\((V\.?O\.?|O\.?S\.?|F|E|CONT\'D|cont\'d)\))?\s*$',
         re.IGNORECASE
     )
     # 인라인 대사 패턴: "캐릭터명\t\t(지시)대사" 또는 "캐릭터명 (V.O.)\t\t대사"
     inline_dialogue_re = re.compile(
-        r'^([가-힣a-zA-Z\s]{1,15}?)\s*'
-        r'(?:\((V\.O\.|O\.S\.|CONT\'D|cont\'d|v\.o\.|o\.s\.)\))?\s*'
+        r'^([가-힣a-zA-Z0-9·\s]{1,15}?)\s*'
+        r'(?:\((V\.?O\.?|O\.?S\.?|F|E|CONT\'D|cont\'d)\))?\s*'
         r'\t{1,}\s*(?:\(([^)]*)\)\s*)?(.+)',
         re.IGNORECASE
     )
+
+    def _voice_tag(m: str) -> str:
+        """★ v4.5.0 — 목소리 표기 정규화: V.O. → V.O, O.S. → O.S, f → F (이름에 붙여 쓴다)."""
+        t = (m or "").upper().rstrip(".")
+        return {"VO": "V.O", "V.O": "V.O", "OS": "O.S", "O.S": "O.S"}.get(t.replace(" ", ""), t)
     # 괄호 지시
     paren_re = re.compile(r'^\s{2,}\((.+?)\)\s*$')
     # 구분선/내부메모 (출력 제외)
@@ -1880,12 +1895,12 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
             im = inline_dialogue_re.match(stripped)
             if im:
                 char_name = im.group(1).strip()
-                vo_marker = im.group(2) or ""  # V.O., O.S. 등
+                vo_marker = im.group(2) or ""  # F, O.S, V.O 등
                 inline_paren = im.group(3) or ""  # (부드럽게) 등
                 inline_text = im.group(4).strip()
-                # V.O./O.S.를 캐릭터명에 포함
+                # ★ v4.5.0 — 목소리 표기는 이름에 붙여 쓴다: 수아(F)
                 if vo_marker:
-                    char_name = f"{char_name} ({vo_marker})"
+                    char_name = f"{char_name}({_voice_tag(vo_marker)})"
                 # ★ v3.5.1 — 지문/insert 직후 대사면 빈 줄 1개 삽입
                 if prev_block_type in ("action", "insert"):
                     add_blank_line()
@@ -1898,9 +1913,9 @@ def make_docx_bytes(genre: str, beats_done: dict, title: str = "",
             cm = char_re.match(line)
             if cm:
                 char_name = cm.group(1).strip()
-                vo_marker = cm.group(2) or ""  # V.O., O.S. 등
+                vo_marker = cm.group(2) or ""  # F, O.S, V.O 등
                 if vo_marker:
-                    char_name = f"{char_name} ({vo_marker})"
+                    char_name = f"{char_name}({_voice_tag(vo_marker)})"
                 parenthetical = ""
                 dialogue_lines = []
                 # ★ v3.5.1 — 지문/insert 직후 대사면 빈 줄 1개 삽입
@@ -3355,6 +3370,23 @@ if st.session_state.get("beats_done") and not _SL_MODE:
                          expanded=False):
             for _bk, _sh in _short_beats.items():
                 st.text(f"Beat {_bk} — " + " · ".join(f"S#{n} {c}자" for n, c in _sh))
+        # ★ v4.5.0 — 지문 양식 (A45) — 비트별. 정적 문장은 앞 비트까지 포함해 작품 1회로 센다.
+        if hasattr(SLW, "check_action_format"):
+            _af_beats = {}
+            _af_prior = ""
+            for _bk in sorted(st.session_state["beats_done"].keys(), key=lambda x: int(x)):
+                _bt = _strip_prop_state_memos(str(st.session_state["beats_done"][_bk]))
+                _ar = SLW.check_action_format(_bt, _af_prior)
+                if _ar["flags"]:
+                    _af_beats[_bk] = _ar
+                _af_prior += "\n" + _bt
+            with st.expander(f"✍️ 지문 양식 점검 (A45) — "
+                             f"{'표시 ' + str(sum(len(v['flags']) for v in _af_beats.values())) + '건' if _af_beats else '이상 없음'}",
+                             expanded=False):
+                st.caption("정적 문장(작품 전체 1회)·평가 문장·대사 예고·카메라 지시·곧은 따옴표·숫자 나이·"
+                           "띄어 쓴 번호 인물·목소리 표기를 비트별로 표시합니다. 자동으로 고치지 않습니다.")
+                for _bk, _ar in _af_beats.items():
+                    st.text(f"Beat {_bk} — " + SLW.format_action_format_report(_ar))
 
     # ★ v4.1.0 — 시장 렌즈 점검 · 현지 고증 체크리스트
     _render_market_panel("\n\n".join(
@@ -3487,6 +3519,20 @@ def _sl_scene_neighbors(h: dict, scene_no: int) -> tuple:
     return prev_t, next_t
 
 
+def _sl_other_text(scene_no: int, cur: str = "") -> str:
+    """★ v4.5.0 — 이 씬을 뺀 나머지 원고 전체 (A45 정적 문장 작품 1회 집계용)."""
+    done = _sl_done()
+    full = "\n".join(str(done[k]) for k in sorted(done) if done.get(k))
+    return full.replace(cur, "", 1) if cur else full
+
+
+def _af_report(text: str, prior: str = ""):
+    """★ v4.5.0 — 지문 양식 점검 (scene_list_writer v1.4.0 이상일 때만)."""
+    if SLW is None or not hasattr(SLW, "check_action_format") or not text:
+        return None
+    return SLW.check_action_format(text, prior)
+
+
 def _sl_write_sequence(seq_no: int, instruction: str = "") -> None:
     h = _sl_handoff()
     done = _sl_done()
@@ -3531,6 +3577,8 @@ def _sl_write_sequence(seq_no: int, instruction: str = "") -> None:
         # ★ v4.1.0 — 시장 렌즈 · 사실성 정정
         market_lens=st.session_state.get("market_lens", {}),
         reality_corrections=st.session_state.get("reality_corrections", []),
+        # ★ v4.5.0 — 이 시퀀스를 뺀 나머지 원고 (정적 문장 작품 1회)
+        other_text="\n".join(str(done[k]) for k in seqs if k != seq_no and done.get(k)),
     )
     st.markdown(f'<div class="beat-tag">시퀀스 {seq_no} 집필 중…</div>', unsafe_allow_html=True)
     result = st.write_stream(stream_ai(prompt, tokens=SEQ_WRITE_TOKENS))
@@ -3564,6 +3612,8 @@ def _sl_rewrite_scene(seq_no: int, scene_no: int, instruction: str) -> None:
         # ★ v4.1.0 — 시장 렌즈 · 사실성 정정
         market_lens=st.session_state.get("market_lens", {}),
         reality_corrections=st.session_state.get("reality_corrections", []),
+        # ★ v4.5.0 — 이 씬을 뺀 나머지 원고 (정적 문장 작품 1회)
+        other_text=_sl_other_text(scene_no, cur),
     )
     st.markdown(f'<div class="beat-tag">S#{scene_no} 다시 쓰는 중…</div>', unsafe_allow_html=True)
     result = _sl_clean(st.write_stream(stream_ai(prompt, tokens=8000)))
@@ -3689,6 +3739,8 @@ if _SL_MODE:
         # ★ v4.4.0 — 〔 〕 지시 누출 · 앞 씬과 같은 말 반복 (A41)
         _lk = SLW.check_directive_leak(_txt) if (_txt and hasattr(SLW, "check_directive_leak")) else []
         _rp = SLW.check_marked_repeats(_txt, _h, _n) if (_txt and hasattr(SLW, "check_marked_repeats")) else []
+        # ★ v4.5.0 — 지문 양식 (A45). 정적 문장은 앞 시퀀스까지 포함해 작품 1회로 센다.
+        _af = _af_report(_txt, "\n".join(str(_done[k]) for k in _seqs if k < _n and _done.get(k))) if _txt else None
         if not _txt:
             _mark = "⬜"
         elif (_rep["ok"] and not _sp["flags"] and not _cr and not _db["flags"] and not _ln["short"]
@@ -3697,7 +3749,8 @@ if _SL_MODE:
         else:
             _mark = (f"⚠️ 이탈 {len(_rep['issues'])} · 말투 {len(_sp['flags'])}"
                      f" · 공간 {len(_cr)} · 빈 지문 {len(_db['flags'])} · 분량 미달 {len(_ln['short'])}"
-                     + (f" · 지시 누출 {len(_lk)}" if _lk else "") + (f" · 같은 말 {len(_rp)}" if _rp else ""))
+                     + (f" · 지시 누출 {len(_lk)}" if _lk else "") + (f" · 같은 말 {len(_rp)}" if _rp else "")
+                     + (f" · 지문 양식 {len(_af['flags'])}" if (_af and _af["flags"]) else ""))
         with st.expander(f"시퀀스 {_n} · {_q.get('label', '')} ({_range}) {_mark}",
                          expanded=False):
             if _q.get("goal"):
@@ -3749,6 +3802,12 @@ if _SL_MODE:
             # ★ v4.4.0 — 〔 〕 지시 누출 · 같은 말 반복
             if _lk or _rp:
                 st.warning(SLW.format_directive_report(_lk, _rp))
+            # ★ v4.5.0 — 지문 양식 (A45) — 표시만, 고치지 않는다
+            if _af:
+                if _af["flags"]:
+                    st.warning(SLW.format_action_format_report(_af))
+                else:
+                    st.caption(SLW.format_action_format_report(_af))
 
             st.text(_normalize_screenplay_blank_lines(_txt))
 

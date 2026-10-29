@@ -1,7 +1,12 @@
 # ─────────────────────────────────────────────────────────────
-# BLUE JEANS Story Engine — Scene List Writer Pack v1.3.0
+# BLUE JEANS Story Engine — Scene List Writer Pack v1.4.0
 # scene_list_writer.py — 씬리스트 기준 집필 레이어 (로더 + 파이썬 검증)
 # © 2026 BLUE JEANS PICTURES
+#
+# v1.4.0 (2026-10-29) — Writer Engine v4.5.0 (A45 지문 양식)
+# - check_action_format(): 정적 문장(작품 전체 1회) · 평가 문장 · 대사 예고 · 카메라 지시 ·
+#   곧은 따옴표 · 숫자 나이 · 띄어 쓴 번호 인물 · 목소리 표기 형식. 표시만 하고 고치지 않는다.
+# - silence_lines(): 원고 전체의 정적·침묵 문장 (prompt._A45_SILENCE_RE와 같은 패턴).
 #
 # v1.3.0 (2026-10-29) — Writer Engine v4.4.0 (Creator v2.10.0·v2.10.1 인계 수신)
 # - 로더: writer_handoff_v28.scene_list_report → h["scene_list_report"] (없으면 {}).
@@ -55,7 +60,7 @@ import re
 import copy
 
 MODULE_NAME = "BLUE JEANS Story Engine — Scene List Writer Pack"
-MODULE_VERSION = "v1.3.0"
+MODULE_VERSION = "v1.4.0"
 MODULE_BUILD_DATE = "2026-10-29"
 
 
@@ -1302,3 +1307,142 @@ def format_report_head(h: dict) -> list:
     if diffs:
         lines.append(" · ".join(diffs))
     return lines
+
+
+# ═══════════════════════════════════════════════════════════
+# 13. ★ v1.4.0 (Writer v4.5.0) — A45 지문 양식 점검
+#    근거: Mr. MOON 「부활」 v2.0 원고 ↔ 엔진 v4.0.1 출력 대조.
+#    표시만 하고 자동 수정하지 않는다 (원고는 작가가 고친다).
+#    정적 문장은 작품 전체 1회 — prior_text(앞 원고)에 있으면 이번 원고의 것은 전부 표시.
+# ═══════════════════════════════════════════════════════════
+
+# 정적·침묵 문장 — prompt._A45_SILENCE_RE와 같은 패턴
+SILENCE_LINE_RE = re.compile(
+    r"(?:^|(?<=[.!?…]\s))(?:한\s*박자\s*정적|정적이\s*흐른다|긴\s*정적|잠깐의?\s*(?:침묵|정적)|잠깐|침묵)\s*[.…]"
+    r"|\[\s*(?:긴\s*)?(?:정적|침묵)[^\]]*\]",
+    re.M,
+)
+SILENCE_QUOTA = 1   # 작품 전체
+
+# 평가·해석·의미 부여 — 카메라에 담기지 않는 판정 문장
+_AF_EVAL_RE = re.compile(
+    r"(?:인|한|는|던|ㄴ)?\s*(?:것이다|셈이다)[.!]?$"
+    r"|(?:처럼|듯이?)\s*여긴다"
+    r"|(?:의미한다|뜻한다|상징한다)[.!]?$"
+    r"|이되\s+\S+(?:\s+\S+)?\s*않다[.!]?$"
+    r"|가\s+아니라\s+\S+(?:\s+\S+)?\s*(?:손|사람|눈|얼굴|목소리|일)이다[.!]?$"
+    r"|첫\s*번째\s+\S+이다[.!]?$"
+)
+# 대사 예고 — 바로 다음 줄이 대사인 '~ 말한다/묻는다' 지문
+_AF_SPEECH_LEAD_RE = re.compile(r"(?:말한다|묻는다|대답한다|외친다|중얼거린다|속삭인다|덧붙인다)\.?$")
+# 카메라 지시 (극 중 방송 카메라가 꺼진다 같은 사물 서술은 제외)
+_AF_CAMERA_RE = re.compile(
+    r"카메라가\s*(?:천천히\s*)?(?:당긴다|다가간다|따라간다|비춘다|잡는다|이동한다|빠진다|올라간다|내려간다|훑는다|돈다)"
+    r"|클로즈\s*업|CLOSE\s*UP|프레임\s*(?:밖|안|으로|에서)|패닝|줌\s*인|줌\s*아웃|롱\s*샷|풀\s*샷|바스트\s*샷|POV",
+    re.I,
+)
+_AF_STRAIGHT_Q_RE = re.compile(r"['\"]")
+# 극 중 촬영물(휴대전화 영상·방송 화면) 서술은 카메라 지시로 보지 않는다
+_AF_DIEGETIC_RE = re.compile(r"화면|영상|휴대전화|핸드폰|모니터|녹화|방송|기자|촬영")
+# 여러 사람 중 누가·어디서 말하는지 알려 주는 예고는 허용 (뒤쪽에서 누군가 외친다)
+_AF_LEAD_OK_RE = re.compile(r"누군가|뒤에서|뒤쪽에서|앞줄에서|무전|스피커|수화기|동시에|일제히")
+_AF_AGE_NUM_RE = re.compile(r"[가-힣A-Za-z]+\((\d{1,2})(?:세)?(?:\s*,\s*[남여])?\)")
+# 대사 헤더 — 띄어 쓴 번호 인물 / 목소리 표기 형식
+_AF_HEAD_RE = re.compile(r"^([^\t\n]{1,20}?)\t+\S")
+_AF_SPACED_NUM_RE = re.compile(r"^[가-힣]{1,6}\s+\d{1,2}(?:\s*\(|$)")
+_AF_VOICE_BAD_RE = re.compile(r"\s\((?:F|V\.?O\.?|O\.?S\.?|E)\)|\((?:V\.O\.|O\.S\.)\)|\((?:전화|무전|무전기|스피커)\)$")
+
+ACTION_FORMAT_LABELS = {
+    "silence": "정적 문장",
+    "eval": "평가 문장",
+    "speech_lead": "대사 예고",
+    "camera": "카메라 지시",
+    "straight_quote": "곧은 따옴표",
+    "age_number": "숫자 나이",
+    "spaced_number": "띄어 쓴 번호 인물",
+    "voice_tag": "목소리 표기",
+}
+
+
+def silence_lines(text: str) -> list:
+    """원고 전체의 정적·침묵 문장 [(라벨, 문장)] — 대사 줄 제외."""
+    out = []
+    for sc in parse_scenes(strip_notes(text or "")):
+        label = f"S#{sc['no']}" + (f"-{sc['sub']}" if sc.get("sub") else "")
+        for raw in (sc["body"] or "").split("\n"):
+            ln = raw.strip()
+            if not ln or _DIALOGUE_RE.match(raw.rstrip()):
+                continue
+            for m in SILENCE_LINE_RE.finditer(ln):
+                out.append((label, m.group(0).strip()))
+    return out
+
+
+def check_action_format(text: str, prior_text: str = "") -> dict:
+    """A45 지문 양식 점검. prior_text = 이 원고를 뺀 앞뒤 원고 (정적 문장 작품 1회 집계)."""
+    found = {k: [] for k in ACTION_FORMAT_LABELS}
+    used_before = len(silence_lines(prior_text)) if prior_text else 0
+    sil_seen = used_before
+    for sc in parse_scenes(strip_notes(text or "")):
+        label = f"S#{sc['no']}" + (f"-{sc['sub']}" if sc.get("sub") else "")
+        lines = (sc["body"] or "").split("\n")
+        for li, raw in enumerate(lines):
+            ln = raw.strip()
+            if not ln:
+                continue
+            hm = _AF_HEAD_RE.match(raw.rstrip())
+            if hm:   # 대사 줄
+                head = hm.group(1).strip()
+                if _AF_SPACED_NUM_RE.match(head):
+                    found["spaced_number"].append({"no": sc["no"], "label": label, "line": head})
+                if _AF_VOICE_BAD_RE.search(head):
+                    found["voice_tag"].append({"no": sc["no"], "label": label, "line": head})
+                if _AF_STRAIGHT_Q_RE.search(raw):
+                    found["straight_quote"].append({"no": sc["no"], "label": label, "line": ln[:80]})
+                continue
+            if ln.startswith(("<", "INSERT", "[/INSERT")):
+                continue
+            # 이름만 있는 대사 헤더 줄 (들여쓰기 형식: "\t\t교단 간부 (V.O.)")
+            if len(ln) <= 24 and not re.search(r"[.!?…]$", ln) and re.search(r"\(", ln):
+                if _AF_VOICE_BAD_RE.search(ln):
+                    found["voice_tag"].append({"no": sc["no"], "label": label, "line": ln})
+                continue
+            item = {"no": sc["no"], "label": label}
+            if _AF_STRAIGHT_Q_RE.search(ln):
+                found["straight_quote"].append(dict(item, line=ln[:80]))
+            for m in _AF_AGE_NUM_RE.finditer(ln):
+                found["age_number"].append(dict(item, line=m.group(0)))
+            for m in SILENCE_LINE_RE.finditer(ln):
+                sil_seen += 1
+                if sil_seen > SILENCE_QUOTA:
+                    found["silence"].append(dict(item, line=m.group(0).strip()))
+            if ln.startswith(("[", "CUT TO", "(")):
+                continue
+            sents = [s.strip() for s in _SENT_SPLIT_RE.split(ln) if s.strip()]
+            for s in sents:
+                if _AF_EVAL_RE.search(s):
+                    found["eval"].append(dict(item, line=s))
+                if _AF_CAMERA_RE.search(s) and not _AF_DIEGETIC_RE.search(s):
+                    found["camera"].append(dict(item, line=s))
+            # 대사 예고: 이 지문 줄의 마지막 문장이 '~ 말한다.'이고 다음 내용 줄이 대사
+            if sents and _AF_SPEECH_LEAD_RE.search(sents[-1]) and not _AF_LEAD_OK_RE.search(sents[-1]):
+                nxt = next((x for x in lines[li + 1:] if x.strip()), "")
+                if nxt and _AF_HEAD_RE.match(nxt.rstrip()):
+                    found["speech_lead"].append(dict(item, line=sents[-1]))
+    flags = []
+    for k, items in found.items():
+        for it in items:
+            flags.append(dict(it, kind=k, label_kind=ACTION_FORMAT_LABELS[k]))
+    flags.sort(key=lambda x: (x["no"], x["label"]))
+    return {"counts": {k: len(v) for k, v in found.items()}, "flags": flags,
+            "silence_before": used_before}
+
+
+def format_action_format_report(rep: dict) -> str:
+    c = rep["counts"]
+    head = " · ".join(f"{ACTION_FORMAT_LABELS[k]} {c[k]}" for k in ACTION_FORMAT_LABELS if c.get(k))
+    pre = f" (앞 원고 정적 문장 {rep.get('silence_before', 0)}회)" if rep.get("silence_before") else ""
+    lines = [f"지문 양식(A45): {head or '이상 없음'}{pre} — 표시 {len(rep['flags'])}건"]
+    for f in rep["flags"][:80]:
+        lines.append(f"  {f['label']} [{f['label_kind']}] {f['line']}")
+    return "\n".join(lines)
